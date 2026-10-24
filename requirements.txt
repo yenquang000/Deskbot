@@ -1,0 +1,8 @@
+cffi==2.1.1
+cloudpickle==3.1.2
+Farama-Notifications==0.0.6
+gymnasium==1.4.0
+numpy==2.5.4
+pycparser==3.12
+pymunk==7.3.1
+typing_extensions==4.16.0
