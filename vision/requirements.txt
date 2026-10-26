@@ -1,0 +1,12 @@
+# Deskbot vision - Python dependencies
+# Install with:  pip install -r requirements.txt
+
+opencv-python>=4.8
+numpy>=1.24
+
+# Raspberry Pi 5 only (not installed by pip on laptops):
+#   picamera2 comes preinstalled on Raspberry Pi OS. If it is missing, run:
+#     sudo apt install -y python3-picamera2
+#   On the Pi, create your virtual environment with --system-site-packages
+#   so it can see picamera2:
+#     python3 -m venv --system-site-packages .venv
