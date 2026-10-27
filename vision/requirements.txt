@@ -3,6 +3,8 @@
 
 opencv-python>=4.8
 numpy>=1.24
+flask>=3.0  # browser dashboard
+pyserial>=3.5  # USB link to the Pico
 
 # Raspberry Pi 5 only (not installed by pip on laptops):
 #   picamera2 comes preinstalled on Raspberry Pi OS. If it is missing, run:
