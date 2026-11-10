@@ -1,0 +1,57 @@
+{
+  "random": {
+    "ret": -6.824152863041693,
+    "steps": 80.93,
+    "coverage": 0.19967309073426698,
+    "edge_hit": 1.0,
+    "success": 0.0,
+    "debris": 0.335,
+    "pens": 0.005,
+    "edge_hit_episodes": 200,
+    "episodes": 200
+  },
+  "backup pattern": {
+    "ret": 89.38188972954853,
+    "steps": 598.805,
+    "coverage": 0.8111239287240073,
+    "edge_hit": 0.0,
+    "success": 0.005,
+    "debris": 1.0,
+    "pens": 0.1975,
+    "edge_hit_episodes": 0,
+    "episodes": 200
+  },
+  "backup + edge guard": {
+    "ret": 89.38188972954853,
+    "steps": 598.805,
+    "coverage": 0.8111239287240073,
+    "edge_hit": 0.0,
+    "success": 0.005,
+    "debris": 1.0,
+    "pens": 0.1975,
+    "edge_hit_episodes": 0,
+    "episodes": 200
+  },
+  "PPO model": {
+    "ret": 155.41774195821566,
+    "steps": 215.29,
+    "coverage": 0.7809362687150525,
+    "edge_hit": 0.045,
+    "success": 0.92,
+    "debris": 0.9965,
+    "pens": 0.965,
+    "edge_hit_episodes": 9,
+    "episodes": 200
+  },
+  "PPO + edge guard": {
+    "ret": 158.3101754800461,
+    "steps": 265.18,
+    "coverage": 0.7916064253582594,
+    "edge_hit": 0.0,
+    "success": 0.955,
+    "debris": 1.0,
+    "pens": 0.985,
+    "edge_hit_episodes": 0,
+    "episodes": 200
+  }
+}
