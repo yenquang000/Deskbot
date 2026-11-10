@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deskbot Vision</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header>
+    <h1>Deskbot</h1>
+    <span id="dot" class="dot" title="Connection to the vision program"></span>
+    <span id="summary" class="muted">Connecting…</span>
+  </header>
+
+  <p id="warning" class="warning" hidden></p>
+
+  <main>
+    <section class="video">
+      <div class="frame" id="frame">
+        <img id="stream" src="{{ url_for('stream') }}" alt="Live camera feed">
+        <canvas id="selector"></canvas>
+        <p id="hint" class="hint" hidden>Drag over clean desk · Enter = default area · Esc = cancel</p>
+        <div id="stopped" class="stopped" hidden>Stopped. You can close this tab.</div>
+      </div>
+      <div class="buttons">
+        <button id="btn-learn" title="Learn the desk color (L)">Learn</button>
+        <button id="btn-pause" title="Pause / resume (P)">Pause</button>
+        <button id="btn-snapshot" title="Save the current frame (S)">Snapshot</button>
+        <span id="learn-text" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="btn-quit" class="quit" title="Quit (Q or Esc)">Quit</button>
+      </div>
+    </section>
+
+    <aside>
+      <section>
+        <h2>Filters</h2>
+        <div class="checks">
+          {% for key, label in toggles.items() %}
+          <label><input type="checkbox" class="toggle" value="{{ key }}"> {{ label }}</label>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section>
+        <h2>Bot</h2>
+        <p id="bot" class="muted">Not visible</p>
+      </section>
+
+      <section>
+        <h2>Objects <span id="units" class="muted"></span></h2>
+        <table id="objects">
+          <thead><tr><th>#</th><th>x</th><th>y</th><th>w × h</th><th>area</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="no-objects" class="muted">None</p>
+      </section>
+
+      <details>
+        <summary>Settings</summary>
+        <form id="settings" autocomplete="off">
+          <fieldset>
+            <legend>Detection</legend>
+            <label>Learn frames <input name="learn_frames" type="number" min="1" max="300"></label>
+            <label>Blur size (odd) <input name="blur_kernel" type="number" min="1" max="31" step="2"></label>
+            <label>Brightness weight <input name="l_weight" type="number" min="0" max="1" step="0.05"></label>
+            <label>Score threshold <input name="diff_threshold" type="number" min="0.5" max="20" step="0.5"></label>
+            <label>Speckle removal <input name="open_ksize" type="number" min="1" max="31"></label>
+            <label>Gap filling <input name="close_ksize" type="number" min="1" max="31"></label>
+            <label>Min object area <input name="min_object_area" type="number" min="0" step="50"></label>
+            <label class="wide">Std floor L, a, b
+              <span class="triple">
+                <input name="std_floor_0" type="number" min="0.1" step="0.5" aria-label="Std floor L">
+                <input name="std_floor_1" type="number" min="0.1" step="0.5" aria-label="Std floor a">
+                <input name="std_floor_2" type="number" min="0.1" step="0.5" aria-label="Std floor b">
+              </span>
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Desk (marker centre to centre)</legend>
+            <label>Width mm <input name="desk_width_mm" type="number" min="50" max="10000"></label>
+            <label>Height mm <input name="desk_height_mm" type="number" min="50" max="10000"></label>
+          </fieldset>
+          <fieldset>
+            <legend>Pico</legend>
+            <label>Port <input name="pico_port" type="text" placeholder="auto"></label>
+            <label>Sends / second <input name="send_hz" type="number" min="0.5" max="50" step="0.5"></label>
+          </fieldset>
+          <fieldset>
+            <legend>Stream</legend>
+            <label>JPEG quality <input name="jpeg_quality" type="number" min="10" max="100" step="5"></label>
+            <label>Max FPS <input name="max_fps" type="number" min="1" max="60"></label>
+          </fieldset>
+          <div class="buttons">
+            <button type="submit">Apply</button>
+            <button type="button" id="btn-save">Save</button>
+            <button type="button" id="btn-revert">Revert</button>
+          </div>
+          <p id="settings-msg" class="msg" role="status"></p>
+          <div class="buttons">
+            <button type="button" id="btn-clear">Clear desk</button>
+            <button type="button" id="btn-recal">Recalibrate corners</button>
+          </div>
+        </form>
+      </details>
+
+      <details>
+        <summary>Pico</summary>
+        <dl id="pico" class="kv"></dl>
+      </details>
+
+      <details>
+        <summary>Log</summary>
+        <ol id="log" class="log"></ol>
+      </details>
+    </aside>
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>
