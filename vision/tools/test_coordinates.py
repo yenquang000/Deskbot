@@ -136,7 +136,9 @@ class SceneCamera:
 def learned_worker():
     """A worker that has learned the clean desk (no objects, no bot)."""
     clean = camera_view(top_down(objects=False, bot=False))
-    worker = CameraWorker(SceneCamera(clean), config.Settings())
+    # The test desk has its own size, whatever the default desk is.
+    settings = config.Settings(desk_width_mm=DESK_W, desk_height_mm=DESK_H)
+    worker = CameraWorker(SceneCamera(clean), settings)
     worker.settings = worker.settings.validated({"learn_frames": 1})
     worker.last_frame = clean
     worker.start_learning(None)
