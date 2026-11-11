@@ -12,6 +12,12 @@ Usage:
   python main.py --host 0.0.0.0   # on the Pi: open the dashboard from another computer
   python main.py --window     # plain OpenCV window instead of the dashboard
 
+Driving the bot (needs the Pico; see "Driving the bot" in the README):
+  python main.py --drive-check                         # test each move against the camera
+  python main.py --drive ../sim/deskbot_policy.npz     # run the trained policy
+  python main.py --drive ../sim/deskbot_policy.npz --clean-on-arrival
+  python main.py --drive ../sim/deskbot_policy.npz --no-guard   # edge guard off
+
 Dashboard (default): a browser page with the camera, live data, view options,
 settings, and buttons for every command. Keys l, q and Esc work there too.
 
@@ -30,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from camera.camera_select import find_cameras, open_camera  # noqa: E402
 from camera.cameras import HAS_PICAMERA2  # noqa: E402
+from dashboard.drive import DriveOptions  # noqa: E402
 from dashboard.server import run_dashboard  # noqa: E402
 from dashboard.viewer import run  # noqa: E402
 
@@ -54,7 +61,34 @@ def parse_args():
     parser.add_argument(
         "--no-browser", action="store_true", help="don't open the dashboard in a browser"
     )
+    parser.add_argument(
+        "--drive", metavar="PATH_TO_NPZ",
+        help="drive the bot with this exported policy (sim/deskbot_policy.npz)",
+    )
+    parser.add_argument(
+        "--drive-check", action="store_true",
+        help="run each move once and compare it with the camera, instead of the policy",
+    )
+    parser.add_argument(
+        "--clean-on-arrival", action="store_true",
+        help="with --drive: send a clean command when the bot reaches debris",
+    )
+    parser.add_argument(
+        "--no-guard", action="store_true", help="with --drive: turn the edge guard off"
+    )
     return parser.parse_args()
+
+
+def drive_options(args):
+    """DriveOptions from the command line, or None when the bot isn't driven."""
+    if not args.drive and not args.drive_check:
+        return None
+    if args.window:
+        raise ValueError("--drive and --drive-check need the dashboard, not --window")
+    if args.drive and not args.drive_check and not Path(args.drive).is_file():
+        raise ValueError(f"policy file not found: {args.drive}")
+    return DriveOptions(policy=args.drive, check=args.drive_check,
+                        guard=not args.no_guard, clean_on_arrival=args.clean_on_arrival)
 
 
 def main():
@@ -66,6 +100,12 @@ def main():
         print(f"[info] Working OpenCV cameras: {cameras or 'none'}")
         print(f"[info] picamera2 available: {HAS_PICAMERA2}")
         return 0
+
+    try:
+        drive = drive_options(args)
+    except ValueError as e:
+        print(f"[error] {e}")
+        return 1
 
     try:
         camera = open_camera(
@@ -81,7 +121,8 @@ def main():
     if args.window:
         run(camera)
         return 0
-    return run_dashboard(camera, args.host, args.port, open_browser=not args.no_browser)
+    return run_dashboard(camera, args.host, args.port, open_browser=not args.no_browser,
+                         drive=drive)
 
 
 if __name__ == "__main__":

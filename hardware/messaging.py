@@ -6,6 +6,7 @@ system are described in shared/config.py; the Pico side is pico_controller.py.
 
 import glob
 import json
+import random
 import threading
 import time
 from collections import deque
@@ -17,12 +18,13 @@ from shared import config as shared
 _START = time.monotonic()
 
 
-def encode(seq, desk_size, calibrated, bot, objects):
+def encode(seq, desk_size, calibrated, bot, objects, cmd=None):
     """
     Build one message line (bytes ending in a newline).
 
     desk_size: (width_mm, height_mm). bot: {"x", "y", "hd"} or None.
     objects: list of {"id", "x", "y", "w", "h", "a"}. Numbers are rounded to ints.
+    cmd: {"id", "do", "a"} for the Pico to carry out, or None to leave it out.
     """
     message = {
         "seq": seq,
@@ -38,6 +40,8 @@ def encode(seq, desk_size, calibrated, bot, objects):
                               "hd": round(bot["hd"]) % 360}
         message["objs"] = [{k: round(o[k]) for k in ("id", "x", "y", "w", "h", "a")}
                            for o in objects]
+    if cmd is not None:
+        message["cmd"] = cmd
     return (json.dumps(message, separators=(",", ":")) + "\n").encode()
 
 
@@ -60,6 +64,9 @@ class PicoLink(threading.Thread):
     """
     Sends the latest coordinates to the Pico at a fixed rate and collects what
     the Pico prints back. Reconnects by itself if the Pico is unplugged.
+
+    It can also carry one command at a time (send_command / wait_done): the
+    command rides in every message until the Pico answers "DONE <id>".
     """
 
     RETRY_SECONDS = 2.0
@@ -72,6 +79,14 @@ class PicoLink(threading.Thread):
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._state = None  # (desk_size, calibrated, bot, objects)
+        self._state_time = 0.0  # time.monotonic() of the last update()
+        # Command state has its own lock so the policy thread (send_command,
+        # wait_done) and the send thread never wait on each other through _lock.
+        self._cmd_lock = threading.Condition()
+        self._cmd = None  # the pending command, or None
+        self._cmd_done = None  # id of the last finished (or replaced) command
+        # A random start means a restarted Pi never reuses the id the Pico did last.
+        self._next_cmd_id = random.randrange(1, 1_000_000)
         self._serial = None
         self._buffer = b""
 
@@ -96,6 +111,43 @@ class PicoLink(threading.Thread):
         """Hand over the newest coordinates; only the latest is ever sent."""
         with self._lock:
             self._state = (desk_size, calibrated, bot, objects)
+            self._state_time = time.monotonic()
+
+    def latest(self):
+        """
+        The newest (desk_size, calibrated, bot, objects) given to update() and
+        its age in seconds, or (None, None) before the first update.
+        """
+        with self._lock:
+            if self._state is None:
+                return None, None
+            return self._state, time.monotonic() - self._state_time
+
+    def send_command(self, do, a=None):
+        """
+        Queue a command for the Pico ("move", "clean" or "stop") and return its
+        id. Only one is pending at a time: a new one replaces an unfinished one.
+        """
+        with self._cmd_lock:
+            self._next_cmd_id += 1
+            self._cmd = {"id": self._next_cmd_id, "do": do, "a": a}
+            self._cmd_lock.notify_all()  # anyone waiting on a replaced command
+            return self._next_cmd_id
+
+    def wait_done(self, cmd_id, timeout=5.0):
+        """
+        Block until the Pico reports DONE for cmd_id. False if the timeout
+        passes first or the command was replaced by a newer one.
+        """
+        deadline = time.monotonic() + timeout
+        with self._cmd_lock:
+            while self._cmd_done != cmd_id:
+                left = deadline - time.monotonic()
+                replaced = self._cmd is None or self._cmd["id"] != cmd_id
+                if left <= 0 or replaced:
+                    return False
+                self._cmd_lock.wait(left)
+            return True
 
     def stop(self):
         self._stop_event.set()
@@ -166,8 +218,10 @@ class PicoLink(threading.Thread):
             state = self._state
         if state is None:
             return
+        with self._cmd_lock:
+            cmd = self._cmd
         self.seq += 1
-        line = encode(self.seq, *state)
+        line = encode(self.seq, *state, cmd=cmd)
         try:
             self._serial.write(line)
         except (serial.SerialException, OSError) as e:
@@ -190,8 +244,22 @@ class PicoLink(threading.Thread):
             line, self._buffer = self._buffer.split(b"\n", 1)
             text = line.decode(errors="replace").strip()
             if text:
+                if text.startswith("DONE "):
+                    self._command_done(text)
                 self._reply(text)
         self._buffer = self._buffer[-4096:]  # never grow without bound
+
+    def _command_done(self, text):
+        """Handle "DONE <id>": stop repeating that command and wake wait_done()."""
+        try:
+            done_id = int(text.split()[1])
+        except (IndexError, ValueError):
+            return
+        with self._cmd_lock:
+            if self._cmd is not None and self._cmd["id"] == done_id:
+                self._cmd = None
+                self._cmd_done = done_id
+                self._cmd_lock.notify_all()
 
     def _reply(self, text):
         self.last_reply = text

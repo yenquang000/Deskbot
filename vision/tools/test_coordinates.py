@@ -1,5 +1,6 @@
 """
-Synthetic checks for the desk coordinate system, object boxes and the Pico link.
+Synthetic checks for the desk coordinate system, object boxes, the Pico link
+and the command channel (move / clean / stop, answered by DONE).
 
 Builds a top-down desk (1 px = 1 mm) with the 4 corner markers, the bot marker
 and objects of known size, then warps it to a tilted camera view and checks
@@ -14,6 +15,7 @@ import argparse
 import json
 import math
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -27,6 +29,7 @@ sys.path.insert(0, str(VISION_DIR))
 import config  # noqa: E402
 from hardware import messaging, pico_controller  # noqa: E402
 from shared import config as shared  # noqa: E402
+from dashboard.drive import DriveOptions, start_drive  # noqa: E402
 from dashboard.worker import CameraWorker  # noqa: E402
 
 DESK_W, DESK_H = 1000, 600  # mm, marker centre to centre
@@ -227,6 +230,168 @@ def check_messages():
           s["error"])
 
 
+class FakePico:
+    """
+    A stand-in serial port with the real Pico code behind it: each line written
+    goes through pico_controller.parse() and on_update(), and whatever the Pico
+    would print comes back as the reply. Set deaf=True to drop everything.
+    """
+
+    def __init__(self):
+        self.lines = []  # every message the Pi sent, decoded
+        self.deaf = False
+        self._out = b""
+
+    def write(self, data):
+        message = pico_controller.parse(data.decode())
+        self.lines.append(message)
+        if self.deaf or message is None:
+            return
+        pico_controller.print = self._print  # catch the Pico's print()
+        try:
+            pico_controller.on_update(message)
+        finally:
+            del pico_controller.print
+
+    def _print(self, text):
+        self._out += (text + "\n").encode()
+
+    @property
+    def in_waiting(self):
+        return len(self._out)
+
+    def read(self, count):
+        data, self._out = self._out[:count], self._out[count:]
+        return data
+
+    def close(self):
+        pass
+
+
+class FakeLink(messaging.PicoLink):
+    """A PicoLink whose serial port is a FakePico."""
+
+    def __init__(self, pico, **kwargs):
+        super().__init__("fake", **kwargs)
+        self.pico = pico
+
+    def _open(self):
+        self._serial = self.pico
+        return True
+
+
+def check_commands():
+    bot = {"x": 412.4, "y": 230.6, "hd": 90.0}
+    state = ((1000, 600), True, bot, [])
+
+    # The Pico alone: the same command three times is carried out once.
+    printed, moves = [], []
+    pico_controller.print = printed.append
+    real_action = pico_controller.run_action
+    pico_controller.run_action = moves.append
+    try:
+        line = messaging.encode(1, *state, cmd={"id": 4242, "do": "move", "a": 2}).decode()
+        for _ in range(3):
+            pico_controller.on_update(pico_controller.parse(line))
+        pico_controller.on_update(pico_controller.parse(messaging.encode(2, *state).decode()))
+    finally:
+        del pico_controller.print
+        pico_controller.run_action = real_action
+    check("Pico runs a repeated command once and prints one DONE",
+          printed == ["DONE 4242"] and moves == [2], f"printed {printed}, moves {moves}")
+    check("Pico parse defaults cmd to None",
+          pico_controller.parse(messaging.encode(1, *state).decode())["cmd"] is None)
+
+    # The Pi side, stepped by hand against a Pico that hears nothing.
+    pico = FakePico()
+    pico.deaf = True
+    link = FakeLink(pico)
+    link._open()
+    link.update(*state)
+    link._send_latest()
+    plain = messaging.encode(1, *state).decode().strip()
+    same = json.loads(link.last_message) | {"t": 0} == json.loads(plain) | {"t": 0}
+    check("messages without a command are unchanged", same and "cmd" not in link.last_message)
+
+    first = link.send_command("move", 0)
+    for _ in range(3):
+        link._send_latest()
+        link._read_replies()
+    check("a command is repeated in every message until DONE",
+          all(m["cmd"] == {"id": first, "do": "move", "a": 0} for m in pico.lines[1:4]))
+    check("wait_done times out without DONE", link.wait_done(first, timeout=0.2) is False)
+
+    second = link.send_command("stop")
+    link._send_latest()
+    check("a new command replaces the unfinished one, with a new id",
+          second != first and pico.lines[-1]["cmd"] == {"id": second, "do": "stop", "a": None})
+
+    pico.deaf = False
+    link._send_latest()   # the Pico hears it now and answers DONE
+    link._read_replies()
+    link._send_latest()
+    check("the command is dropped from messages after DONE",
+          link.wait_done(second, timeout=0) and pico.lines[-1]["cmd"] is None
+          and link.last_reply == f"DONE {second}")
+
+    state_now, age = link.latest()
+    check("latest() returns the newest state and its age",
+          state_now == state and 0 <= age < 5 and messaging.PicoLink("fake").latest() == (None, None))
+    check("command ids start at a random number",
+          len({messaging.PicoLink("fake").send_command("stop") for _ in range(5)}) > 1)
+
+    # Both threads running: wait_done blocks until the Pico's DONE comes back.
+    live = FakeLink(FakePico(), send_hz=50)
+    live.update(*state)
+    live.start()
+    started = time.monotonic()
+    done = live.wait_done(live.send_command("clean", 100), timeout=2.0)
+    took = time.monotonic() - started
+    live.pico.deaf = True
+    lost = live.wait_done(live.send_command("move", 1), timeout=0.3)
+    live.stop()
+    live.join(2)
+    check("wait_done returns True on DONE and False on timeout",
+          done and took < 1.0 and lost is False, f"DONE after {took * 1000:.0f} ms")
+
+
+def check_drive():
+    """The drive thread on the real link and the real Pico code (motors are stubs)."""
+    def refresh(link, stop):  # stands in for the camera worker
+        while not stop.wait(0.02):
+            link.update((1206, 597), True, {"x": 600.0, "y": 300.0, "hd": 0.0}, [])
+
+    def drive(options, seconds):
+        link, log, stop = FakeLink(FakePico(), send_hz=100), [], threading.Event()
+        threading.Thread(target=refresh, args=(link, stop), daemon=True).start()
+        link.start()
+        thread = start_drive(link, options, lambda text, level="info": log.append(text), stop)
+        thread.join(seconds)
+        stop.set()
+        thread.join(5)
+        link.stop()
+        link.join(2)
+        done = [m["cmd"]["do"] for m in link.pico.lines if m and m["cmd"]]
+        return log, done, thread.is_alive()
+
+    log, done, alive = drive(DriveOptions(check=True), 20)
+    # The bot never moves here (the Pico's motor functions are stubs), so the
+    # check must report every action as a problem.
+    check("--drive-check sends the 4 moves and flags a bot that doesn't move",
+          not alive and done.count("move") >= 4 and "stop" in done
+          and any("4 problem" in line for line in log), log[-1] if log else "no log")
+
+    policy = Path(VISION_DIR.parent, "sim", "deskbot_policy.npz")
+    log, done, alive = drive(DriveOptions(policy=str(policy)), 3)
+    check("--drive runs the policy, then stops the bot on quit",
+          not alive and "move" in done and done[-1] == "stop"
+          and any("ended (stopped)" in line for line in log), log[-1] if log else "no log")
+
+    log, done, alive = drive(DriveOptions(policy="no_such_policy.npz"), 3)
+    check("--drive reports a bad policy file in the log",
+          not alive and any("error" in line for line in log), log[-1] if log else "no log")
+
+
 def save_debug(worker, folder):
     worker.toggles.update(diff=True, grid=True)
     worker.recalibrate()
@@ -246,6 +411,8 @@ def main():
 
     worker = check_coordinates()
     check_messages()
+    check_commands()
+    check_drive()
     print(f"\n{sum(results)}/{len(results)} checks passed")
     if args.save_debug:
         save_debug(worker, args.save_debug)

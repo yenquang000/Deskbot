@@ -28,6 +28,21 @@ Message sent to the Pico, one JSON object per line (all numbers are integers):
   objs  flagged objects: centre (x, y), box size along x and y (w, h),
         and the area they actually cover in mm^2 (a)
   When cal is false, bot is null and objs is empty: there are no coordinates yet.
+
+Commands (Pi -> Pico). The Pi is the brain; a message may carry one command in
+an optional "cmd" field, and the Pico answers "DONE <id>" when it has finished:
+
+  "cmd": {"id": 81723, "do": "move",  "a": 0}     a = action 0-3
+  "cmd": {"id": 81724, "do": "clean", "a": 1500}  a = milliseconds
+  "cmd": {"id": 81725, "do": "stop",  "a": null}
+
+  move actions: 0 forward 5 cm, 1 backward 5 cm, 2 heading +45 deg, 3 heading -45 deg
+  (the step sizes of Measurements in sim/env.py). +45 makes hd increase.
+  - Only one command is pending at a time; a new one replaces an unfinished one.
+  - The Pi repeats the pending command in every message until it reads the line
+    "DONE <id>" from the Pico, then leaves "cmd" out again.
+  - The Pico carries out a command once: it ignores an id equal to the last one
+    it did. Ids start at a random number each time the Pi program starts.
 """
 
 # ArUco markers (print them with: python vision/tools/make_markers.py)

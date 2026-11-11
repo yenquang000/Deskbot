@@ -13,6 +13,7 @@ from werkzeug.serving import make_server
 
 import config
 from hardware.messaging import PicoLink
+from dashboard.drive import start_drive
 from dashboard.worker import TOGGLES, CameraWorker
 
 
@@ -96,8 +97,13 @@ def create_app(worker, quit_event):
     return app
 
 
-def run_dashboard(camera, host="127.0.0.1", port=8000, open_browser=True):
-    """Run the camera worker and the dashboard until Quit is clicked or Ctrl+C."""
+def run_dashboard(camera, host="127.0.0.1", port=8000, open_browser=True, drive=None):
+    """
+    Run the camera worker and the dashboard until Quit is clicked or Ctrl+C.
+
+    drive: DriveOptions to also run the policy (or the movement check) on the
+    bot, or None for vision only.
+    """
     settings = config.load()
 
     def on_reply(text):
@@ -123,6 +129,8 @@ def run_dashboard(camera, host="127.0.0.1", port=8000, open_browser=True):
 
     worker.start()
     link.start()
+    drive_stop = threading.Event()
+    drive_thread = start_drive(link, drive, worker.add_log, drive_stop) if drive else None
     threading.Thread(target=server.serve_forever, daemon=True, name="dashboard").start()
 
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
@@ -139,6 +147,9 @@ def run_dashboard(camera, host="127.0.0.1", port=8000, open_browser=True):
     except KeyboardInterrupt:
         pass
     finally:
+        if drive_thread is not None:  # while the link is still up, so "stop" gets out
+            drive_stop.set()
+            drive_thread.join(timeout=8)
         worker.stop()
         link.stop()
         worker.join(timeout=3)

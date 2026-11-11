@@ -1,6 +1,10 @@
 """
-Deskbot Pico program (MicroPython). Receives desk coordinates from the
-Raspberry Pi over USB and decides how the bot moves.
+Deskbot Pico program (MicroPython). Receives desk coordinates and commands from
+the Raspberry Pi over USB and carries the commands out, one at a time.
+
+The Pi is the brain: it runs the trained policy and sends a "cmd" in its
+messages. The Pico only moves by one action, runs the cleaner or stops, then
+prints "DONE <id>" so the Pi knows the command is finished.
 
 Install: copy this file to the Pico as main.py, so it runs on power-up:
   mpremote cp hardware/pico_controller.py :main.py
@@ -10,7 +14,8 @@ The Pi sends one JSON line roughly 10 times a second (format and coordinate
 system: shared/config.py). Values are in millimetres, origin at corner marker 0,
 x toward marker 1, y toward marker 3, heading 0 = facing +x, 90 = facing +y.
 
-All movement calculations belong in on_update() below.
+The motor and cleaner code goes in the TODO stubs below (drive_cm, turn_deg,
+run_cleaner, stop).
 """
 
 import json
@@ -35,6 +40,13 @@ except ImportError:  # CPython, so parse() can be tested on a laptop
 LINK_TIMEOUT_MS = 500  # same as LINK_TIMEOUT_S in shared/config.py
 STATUS_EVERY_MS = 2000  # how often to report back to the Pi
 
+# One policy action. These must match Measurements in sim/env.py (base_step and
+# turn_deg): the policy was trained with exactly these step sizes.
+STEP_CM = 5
+TURN_DEG = 45
+
+_last_cmd_id = None  # id of the last command carried out
+
 
 def parse(line):
     """
@@ -42,7 +54,8 @@ def parse(line):
 
     Result: {"seq", "t", "desk": [w, h], "cal": bool,
              "bot": {"x", "y", "hd"} or None,
-             "objs": [{"id", "x", "y", "w", "h", "a"}, ...]}
+             "objs": [{"id", "x", "y", "w", "h", "a"}, ...],
+             "cmd": {"id", "do", "a"} or None}
     """
     try:
         msg = json.loads(line)
@@ -54,35 +67,77 @@ def parse(line):
         if key not in msg:
             return None
     msg.setdefault("bot", None)
+    msg.setdefault("cmd", None)
     return msg
 
 
-# ----- your bot logic goes here ------------------------------------------------
+# ----- commands from the Pi -----------------------------------------------------
 
 def on_update(state):
     """
-    Called with every new message. Do the movement calculations here.
+    Called with every new message. Carries out state["cmd"] if it is new.
 
-    state["cal"] is False until the Pi has found all 4 corner markers; then
-    there are no coordinates, so the bot should wait.
-    state["bot"] is None when the bot's marker is not visible.
+    The Pi repeats a command in every message until it sees DONE, so a command
+    whose id equals the last one carried out is ignored.
     """
-    if not state["cal"] or state["bot"] is None:
-        stop()
+    global _last_cmd_id
+    cmd = state["cmd"]
+    if not cmd or cmd.get("id") is None or cmd["id"] == _last_cmd_id:
         return
-    bot = state["bot"]
-    objs = state["objs"]
-    # Example only: the nearest object, as a target to drive to.
-    if objs:
-        target = min(objs, key=lambda o: (o["x"] - bot["x"]) ** 2 + (o["y"] - bot["y"]) ** 2)
-        _ = target  # TODO: steer toward target["x"], target["y"] from bot x, y, heading
-    else:
+    _last_cmd_id = cmd["id"]
+    do = cmd.get("do")
+    if do == "move":
+        run_action(cmd.get("a"))
+    elif do == "clean":
+        run_cleaner(cmd.get("a") or 0)
+    else:  # "stop", and anything unknown: stopping is the safe answer
         stop()
+    print("DONE %d" % cmd["id"])
+
+
+def run_action(action):
+    """One policy action: 0 forward, 1 backward, 2 heading +45, 3 heading -45."""
+    if action == 0:
+        drive_cm(STEP_CM)
+    elif action == 1:
+        drive_cm(-STEP_CM)
+    elif action == 2:
+        turn_deg(TURN_DEG)
+    elif action == 3:
+        turn_deg(-TURN_DEG)
+    stop()
 
 
 def on_lost():
     """Called when no message has arrived for LINK_TIMEOUT_MS: stop safely."""
     stop()
+
+
+# ----- motors and cleaner: TODO, fill these in for the real hardware -----------
+# These may block until the move is finished. While they block, the Pi's
+# messages queue up on USB, so keep each one short (about a second or two).
+
+def drive_cm(cm):
+    """TODO: drive straight by cm (negative = backward), then return."""
+    pass
+
+
+def turn_deg(deg):
+    """
+    TODO: turn on the spot by deg, then return.
+
+    Direction is defined by the desk heading, never by "the robot's left":
+    a positive deg must make the camera's heading (hd) INCREASE. y points
+    toward marker 3, usually down in the image, so positive is clockwise when
+    seen from a camera looking down at the desk. Check it with
+    `python main.py --drive-check`, which flags a turn wired backwards.
+    """
+    pass
+
+
+def run_cleaner(ms):
+    """TODO: run the cleaner for ms milliseconds, then return."""
+    pass
 
 
 def stop():
@@ -104,7 +159,9 @@ def main():
 
     while True:
         # Read whatever has arrived without waiting, one character at a time,
-        # and handle each complete line.
+        # and handle each complete line. A command can block in on_update();
+        # all the lines queued meanwhile are read here before the link timeout
+        # is checked below, so keep this order.
         while poller.poll(0):
             char = sys.stdin.read(1)
             if char == "\n":

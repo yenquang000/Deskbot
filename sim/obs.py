@@ -37,6 +37,16 @@ def make_grid(W, H, robot_radius, clean_radius, cell=5.0):
     return CX, CY, coverable
 
 
+def travel_room(pos, ang, W, H, robot_radius):
+    """How far a robot at `pos` can travel along `ang` before its footprint crosses a
+    desk edge. Same maths as DeskbotEnv._clear(), for code that has no env (the Pi)."""
+    r = robot_radius
+    c, s = np.cos(ang), np.sin(ang)
+    tx = (W - r - pos[0]) / c if c > 1e-9 else ((r - pos[0]) / c if c < -1e-9 else np.inf)
+    ty = (H - r - pos[1]) / s if s > 1e-9 else ((r - pos[1]) / s if s < -1e-9 else np.inf)
+    return max(min(tx, ty), 0.0)
+
+
 def mark_clean(cleaned, CX, CY, coverable, pos, clean_radius):
     """Mark cells swept at `pos` as cleaned (in place). Returns number of new cells."""
     d2 = (CX - pos[0]) ** 2 + (CY - pos[1]) ** 2

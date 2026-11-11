@@ -1,15 +1,16 @@
 # Deskbot
 
 A small robot that keeps a desk clean. A camera watches the desk, the vision program
-finds objects on it and works out where everything is in millimetres, and a Raspberry
-Pi Pico drives the bot using those coordinates.
+finds objects on it and works out where everything is in millimetres, the policy
+trained in `sim/` picks the next move from those coordinates, and a Raspberry Pi Pico
+carries the move out.
 
 | Folder | What it holds |
 |---|---|
 | `vision/` | Camera, computer vision, browser dashboard and the Pi → Pico link (see below) |
 | `hardware/` | `messaging.py` (Pi side of the USB link) and `pico_controller.py` (the Pico's program) |
 | `shared/` | `config.py`: marker IDs, coordinate system and message format used by everything |
-| `sim/` | Simulation and training |
+| `sim/` | Simulation, training, and the control loop that drives the real bot (`pi_runner.py`, `vision_hardware.py`) |
 
 ---
 
@@ -33,13 +34,14 @@ vision/
 ├── dashboard/
 │   ├── server.py         the Flask web server and its API
 │   ├── worker.py         background thread: camera -> detection -> drawing -> Pico
+│   ├── drive.py          background thread for --drive: runs the sim/ policy on the bot
 │   ├── viewer.py         the plain OpenCV window (--window)
 │   ├── templates/        dashboard.html
 │   └── static/           dashboard.css, dashboard.js
 └── tools/
     ├── make_markers.py   prints the ArUco markers
     ├── test_filters.py   checks for the filter pipeline
-    └── test_coordinates.py  checks for markers, coordinates and the Pico link
+    └── test_coordinates.py  checks for markers, coordinates, the Pico link and commands
 ```
 
 Files created while running (all ignored by git): `vision/settings.json` (saved
@@ -215,9 +217,31 @@ The Pi sends one JSON line over USB serial, 10 times a second by default:
 | `cal` | `true` once all 4 corners have been seen; until then `bot` is `null` and `objs` is empty |
 | `bot` | Bot centre (`x`, `y`) and heading (`hd`), or `null` if its marker isn't visible |
 | `objs` | Each object's ID, centre (`x`, `y`), box size along x and y (`w`, `h`) and covered area (`a`, mm²) |
+| `cmd` | Only while a command is pending: `{"id", "do", "a"}`, see *Commands* below |
 
 All numbers are whole numbers. The Pico is found automatically (`/dev/ttyACM*` on
 Linux), and the link reconnects by itself if it's unplugged.
+
+#### Commands
+
+When the bot is being driven (`--drive`), a message can also carry one command:
+
+```json
+"cmd": {"id": 81723, "do": "move",  "a": 0}
+"cmd": {"id": 81724, "do": "clean", "a": 1500}
+"cmd": {"id": 81725, "do": "stop",  "a": null}
+```
+
+| `do` | `a` | What the Pico does |
+|---|---|---|
+| `move` | action 0–3 | 0 forward 5 cm, 1 backward 5 cm, 2 heading +45°, 3 heading −45° |
+| `clean` | milliseconds | Runs the cleaner for that long |
+| `stop` | `null` | Stops the motors |
+
+The Pi repeats the command in every message until the Pico prints `DONE <id>`, then
+leaves `cmd` out again. The Pico carries out each id once. Only one command is pending
+at a time, and ids start at a random number each time the program starts. Messages
+without a command look exactly as before.
 
 ### The Pico
 
@@ -228,10 +252,61 @@ as `main.py` so it runs on power-up:
 mpremote cp hardware/pico_controller.py :main.py
 ```
 
-(or open it in Thonny and save it to the Pico as `main.py`). All movement
-calculations go in `on_update()`, and `stop()` should stop the motors. The Pico calls
+(or open it in Thonny and save it to the Pico as `main.py`). The Pico makes no
+decisions: it carries out the commands from the Pi and prints `DONE <id>`. The motor
+and cleaner code goes in four stubs that are still **TODO**: `drive_cm(cm)`,
+`turn_deg(deg)`, `run_cleaner(ms)` and `stop()`. A positive `turn_deg` must make the
+camera's heading increase (clockwise seen from a camera looking down). The Pico calls
 `stop()` by itself if no message arrives for 0.5 s, and reports back every 2 s; the
 replies appear in the dashboard's Pico section.
+
+### Driving the bot
+
+The trained policy from `sim/` runs on the Pi, inside the vision program:
+
+```
+camera → vision (bot pose + objects, mm) → sim/vision_hardware.py (cm, rad)
+       → sim/obs.py observation → policy → edge guard → command → Pico moves
+       → camera reads the new pose → repeat
+```
+
+```
+cd vision
+python main.py --drive-check                        # test each move against the camera
+python main.py --drive ../sim/deskbot_policy.npz    # run the policy
+```
+
+| Flag | What it does |
+|---|---|
+| `--drive PATH_TO_NPZ` | Runs the exported policy on the bot |
+| `--drive-check` | Runs each move once (forward, backward, turn +, turn −) and logs the camera-measured distance and heading change against 5 cm and ±45° |
+| `--clean-on-arrival` | Also sends a `clean` command when a move ends on top of debris (off by default; the cleaner is assumed to run while the bot drives) |
+| `--no-guard` | Turns the edge guard off (it is on by default: it overrides any move that would leave the desk) |
+
+Without these flags the program behaves exactly as before and never commands the bot.
+The policy needs only NumPy on the Pi. Start, end reason (goal reached, max steps, bot
+lost, stopped), steps, coverage, edge guard interventions and errors appear in the
+dashboard log. The pose always comes from the camera: if the bot marker or a corner
+is lost the bot stops and waits, and gives up after 10 s. The bot marker must sit on
+the centre of the robot.
+
+Objects are split into pens and debris by shape: a pen has a long side of at least
+80 mm and is either 3 times longer than wide or fills less than 35% of its box (a
+diagonal pen). Pens are pushed to the corner at marker 2. The constants are at the top
+of `sim/vision_hardware.py`.
+
+Bring-up order:
+
+1. `--drive-check`. Fix anything it flags first: a step more than 20% off, a turn more
+   than 10° off, or a turn in the wrong direction (action 2 must increase the heading).
+2. `--drive` with the guard on, on a clear desk.
+3. Add debris.
+4. Add pens.
+
+The policy was trained on a 120.65 × 59.69 cm desk (±5%), a 10 cm robot radius, 5 cm
+steps and 45° turns (`Measurements` in `sim/env.py`). If the marker spacing set in the
+dashboard differs by more than 5%, the log shows a warning: match the marker spacing
+to the training desk, or set `Measurements` to the real desk and retrain.
 
 ### Tests
 
@@ -239,7 +314,9 @@ replies appear in the dashboard's Pico section.
 cd vision
 python tools/test_filters.py                     # filter pipeline (15 checks)
 python tools/test_filters.py --save-debug out    # also writes a picture of every stage
-python tools/test_coordinates.py                 # markers, mm coordinates, Pico link (17 checks)
+python tools/test_coordinates.py                 # markers, mm coordinates, Pico link, commands (30 checks)
+cd ../sim
+python test_vision_bridge.py                     # vision -> policy -> commands against the simulator
 ```
 
 Both use generated images, so no camera or Pico is needed. They exit with 0 when every
@@ -255,6 +332,8 @@ check passes.
 | Learning rejected | Drag over clear desk surface only (see *Learning the desk*) |
 | Corner count stuck below 4/4 | Keep every marker fully in view with its white border, flat and not glossy |
 | "Pico not connected" | Plug the Pico in by USB and check it runs `main.py`; set the port in Settings if it isn't found |
+| "no DONE from the Pico" in the log | The Pico is unplugged, isn't running `pico_controller.py`, or a move takes longer than 5 s |
+| Drive warns about the desk size | Set the marker spacing to the training desk, or change `Measurements` and retrain (see *Driving the bot*) |
 | Qt warnings in `--window` mode | Harmless; the window still works |
 
 ### Changes to `vision/`
@@ -273,6 +352,8 @@ check passes.
   system; a marker on the bot gives its position and heading.
 - **Pico link** (`hardware/messaging.py`, `hardware/pico_controller.py`) sends the
   coordinates over USB 10 times a second.
+- **Driving** (`--drive`, `--drive-check`): the policy from `sim/` runs in a thread of
+  the vision program and commands the Pico one move at a time.
 - **Settings** can be changed live in the dashboard and saved to `vision/settings.json`.
 - **Tests** in `vision/tools/` check the filters, coordinates and Pico messages without
   a camera.
