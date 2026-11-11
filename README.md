@@ -164,7 +164,7 @@ it: drag over clear desk surface only, and stay inside the markers.
 | Gap filling | 7 | Joins nearby pieces of one object (a pen and its cap) |
 | Min object area | 400 | Smallest object: mm² once calibrated, pixels before |
 | Std floor L, a, b | 4, 3, 3 | Stops a very even desk from making detection oversensitive |
-| Desk width / height | 1000 / 600 mm | Distance between corner marker centres |
+| Desk width / height | 1207 / 597 mm | Distance between corner marker centres; the default is the desk the policy was trained on |
 | Pico port / sends per second | auto / 10 | Serial port and message rate |
 | JPEG quality / Max FPS | 80 / 30 | Dashboard stream quality and processing rate |
 
@@ -304,8 +304,9 @@ Bring-up order:
 4. Add pens.
 
 The policy was trained on a 120.65 × 59.69 cm desk (±5%), a 10 cm robot radius, 5 cm
-steps and 45° turns (`Measurements` in `sim/env.py`). If the marker spacing set in the
-dashboard differs by more than 5%, the log shows a warning: match the marker spacing
+steps and 45° turns (`Measurements` in `sim/env.py`). The default marker spacing
+(1207 × 597 mm) is that desk, so place the corner markers that far apart. If the marker
+spacing set in the dashboard differs by more than 5%, the log shows a warning: match the marker spacing
 to the training desk, or set `Measurements` to the real desk and retrain.
 
 ### Tests

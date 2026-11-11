@@ -19,6 +19,7 @@ from pi_runner import RobotHardware
 PEN_MIN_LONG_MM = 80.0    # long side of the box must be at least this
 PEN_MIN_RATIO = 3.0       # long side / short side
 PEN_MAX_FILL = 0.35       # covered area / box area
+# Pens go to the corner next to marker 2: (W - pen_corner_inset, H - pen_corner_inset).
 PEN_DELIVERED_CM = 15.0   # a pen this close to the pen corner is done (as in env.step)
 
 MAX_POSE_AGE_S = 0.5      # older vision data than this is not trusted

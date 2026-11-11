@@ -50,9 +50,11 @@ ARUCO_DICT = "DICT_4X4_50"
 CORNER_IDS = (0, 1, 2, 3)  # origin, +x corner, far corner, +y corner
 BOT_ID = 4
 
-# Default desk size: distance between corner marker centres, in mm.
-DESK_WIDTH_MM = 1000
-DESK_HEIGHT_MM = 600
+# Default desk size: distance between corner marker centres, in mm. This is the
+# desk the policy in sim/ was trained on (Measurements in sim/env.py: 120.65 x
+# 59.69 cm, rounded to whole mm). Keep the two the same, or retrain.
+DESK_WIDTH_MM = 1207
+DESK_HEIGHT_MM = 597
 
 # Pi -> Pico serial link (USB). The baud rate is ignored by USB serial but kept
 # so the same settings work over UART pins.
