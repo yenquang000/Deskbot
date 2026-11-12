@@ -7,7 +7,9 @@ UART wiring (LINK = "uart", the default), 3.3 V logic on both boards:
   Pico GP0 (UART0 TX, pin 1)  ->  Pi GPIO15 (RXD, pin 10)
   Pico GP1 (UART0 RX, pin 2)  <-  Pi GPIO14 (TXD, pin 8)
   Pico GND (pin 3)            --  Pi GND (pin 6)
-The Pi needs `dtparam=uart0=on` in /boot/firmware/config.txt (then a reboot);
+The Pi needs `dtparam=uart0=on` in /boot/firmware/config.txt and no serial
+console on the port (raspi-config -> Interface Options -> Serial Port: login
+shell No, hardware Yes), then a reboot;
 the port is /dev/ttyAMA0, which messaging.py finds by itself.
 
 The Pi is the brain: it runs the trained policy and sends a "cmd" in its
@@ -102,7 +104,11 @@ STEP_MS = 5
 # CM_PER_S = 9.0 x 6.2 / 5 = 11.2. Then upload this file to the Pico again.
 CM_PER_S = 9.0
 DEG_PER_S = 70.0
-MAX_MOVE_MS = 4000  # safety cap per move; the Pi gives up on DONE after 5 s
+# Safety cap per move or clean. While one blocks, the Pi's messages (about
+# 3 KB/s) queue in UART_RXBUF, which holds about 2.7 s of them; a longer block
+# would overflow it and garble the queued lines. Keep this under that (and under
+# the Pi's 5 s wait for DONE), or raise UART_RXBUF with it.
+MAX_MOVE_MS = 2500
 # "spin" test command: both wheels forward at DRIVE_SPEED for a = ms
 # (negative = backward). Unlike a move it keeps reading the link while it runs.
 SPIN_MAX_MS = 30000

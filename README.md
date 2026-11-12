@@ -260,9 +260,14 @@ the replies appear in the dashboard's Pico section.
 
 **Link.** By default (`LINK = "uart"`) the Pico talks to the Pi over GPIO serial:
 Pico GP0 → Pi GPIO15 (pin 10), Pico GP1 ← Pi GPIO14 (pin 8), and a shared GND. The Pi
-needs `dtparam=uart0=on` in `/boot/firmware/config.txt`; `messaging.py` then finds
-`/dev/ttyAMA0` by itself when no USB Pico is plugged in. Set `LINK = "usb"` to use the
-USB cable instead.
+needs `dtparam=uart0=on` in `/boot/firmware/config.txt`, and no serial console on that
+port: in `sudo raspi-config` → Interface Options → Serial Port, answer **No** to the login
+shell and **Yes** to the serial port hardware (or remove `console=serial0,115200` from
+`/boot/firmware/cmdline.txt`), then reboot. Otherwise the console shares the port with
+the link and the Pico's replies come back garbled. `messaging.py` then finds
+`/dev/ttyAMA0` by itself when no USB Pico is plugged in (this is the Pi 5's GPIO UART; on
+a Pi 3 or 4 `/dev/ttyAMA0` is the Bluetooth UART, so set the port explicitly there).
+Set `LINK = "usb"` to use the USB cable instead.
 
 **Motors.** A TB6612FNG drives the two N20 motors (wiring from the Drive Test sheet):
 GP16 PWMA, GP17/GP18 AIN1/AIN2 (left), GP19/GP20 BIN1/BIN2 (right), GP21 PWMB,
