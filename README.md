@@ -175,7 +175,8 @@ The defaults are the constants at the top of `vision/config.py`.
 1. Run `python tools/make_markers.py`. It writes the markers to `vision/markers/`.
    Print them all at the same size, keeping the white border around each one.
 2. Stick markers 0–3 at the desk corners: 0 = origin, 1 along +x, 2 the far corner,
-   3 along +y. Stick marker 4 flat on top of the bot.
+   3 along +y. Stick marker 4 flat on top of the bot. Marker 5 is the target for
+   `--goto` (see below): lay it flat anywhere on the desk.
 3. Make sure all four corner markers are fully in the camera's view, white border included.
 4. Measure the distance between marker centres (0 → 1 is the width, 0 → 3 the height),
    enter it under **Settings → Desk** and click **Save**.
@@ -303,12 +304,14 @@ camera → vision (bot pose + objects, mm) → sim/vision_hardware.py (cm, rad)
 cd vision
 python main.py --drive-check                        # test each move against the camera
 python main.py --drive ../sim/deskbot_policy.npz    # run the policy
+python main.py --goto                               # drive to the target marker (ID 5)
 ```
 
 | Flag | What it does |
 |---|---|
 | `--drive PATH_TO_NPZ` | Runs the exported policy on the bot |
 | `--drive-check` | Runs each move once (forward, backward, turn +, turn −) and logs the camera-measured distance and heading change against 5 cm and ±45° |
+| `--goto` | Drives to the target marker (ID 5) and follows it when it is moved. No policy needed |
 | `--clean-on-arrival` | Also sends a `clean` command when a move ends on top of debris (off by default; the cleaner is assumed to run while the bot drives) |
 | `--no-guard` | Turns the edge guard off (it is on by default: it overrides any move that would leave the desk) |
 
@@ -319,6 +322,16 @@ dashboard log. The pose always comes from the camera: if the bot marker or a cor
 is lost the bot stops and waits, and gives up after 10 s. The bot marker must sit on
 the centre of the robot.
 
+**Go to a marker** (`--goto`). The simplest way to see the bot move under camera
+control. Lay marker 5 flat on the desk and the bot drives to it, one move at a time
+(the same 5 cm steps and 45° turns as the policy). Each move it either turns toward
+the marker, when the marker is more than 22.5° off its heading, or steps forward. It
+stops when its centre is 18 cm from the marker, so it doesn't drive over and hide it.
+Move the marker more than 28 cm away and the bot follows. It never steps forward off the
+desk: a target too close to an edge makes it wait. If the bot or target marker can't be
+seen it waits, and logs once. The target is drawn in magenta on the video and isn't
+counted as an object. The steering is in `sim/goto_marker.py`; stop with Ctrl+C.
+
 Objects are split into pens and debris by shape: a pen has a long side of at least
 80 mm and is either 3 times longer than wide or fills less than 35% of its box (a
 diagonal pen). Pens are pushed to the corner at marker 2. The constants are at the top
@@ -328,9 +341,10 @@ Bring-up order:
 
 1. `--drive-check`. Fix anything it flags first: a step more than 20% off, a turn more
    than 10° off, or a turn in the wrong direction (action 2 must increase the heading).
-2. `--drive` with the guard on, on a clear desk.
-3. Add debris.
-4. Add pens.
+2. `--goto` with marker 5 on the desk: the bot should drive straight to it.
+3. `--drive` with the guard on, on a clear desk.
+4. Add debris.
+5. Add pens.
 
 The policy was trained on a 120.65 × 59.69 cm desk (±5%), a 10 cm robot radius, 5 cm
 steps and 45° turns (`Measurements` in `sim/env.py`). The default marker spacing
@@ -344,9 +358,9 @@ to the training desk, or set `Measurements` to the real desk and retrain.
 cd vision
 python tools/test_filters.py                     # filter pipeline (15 checks)
 python tools/test_filters.py --save-debug out    # also writes a picture of every stage
-python tools/test_coordinates.py                 # markers, mm coordinates, Pico link, commands (30 checks)
+python tools/test_coordinates.py                 # markers, mm coordinates, Pico link, commands, --goto (34 checks)
 cd ../sim
-python test_vision_bridge.py                     # vision -> policy -> commands against the simulator
+python test_vision_bridge.py                     # vision -> policy / --goto -> commands against the simulator
 ```
 
 Both use generated images, so no camera or Pico is needed. They exit with 0 when every

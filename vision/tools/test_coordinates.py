@@ -77,7 +77,7 @@ def paste_marker(canvas, marker_id, centre_mm, size_mm, heading_deg):
     canvas[covered > 0] = warped[covered > 0]
 
 
-def top_down(objects=True, bot=True, hide_corner=None):
+def top_down(objects=True, bot=True, hide_corner=None, target=None):
     """The desk seen from straight above, 1 px per mm, with a margin around it."""
     h, w = DESK_H + 2 * MARGIN, DESK_W + 2 * MARGIN
     y, x = np.mgrid[0:h, 0:w].astype(np.float32)
@@ -97,6 +97,8 @@ def top_down(objects=True, bot=True, hide_corner=None):
     if bot:  # a dark round bot at (400, 300) facing 30 degrees
         cv2.circle(canvas, (400 + MARGIN, 300 + MARGIN), 75, (60, 60, 60), -1)
         paste_marker(canvas, shared.BOT_ID, (400, 300), BOT_MM, 30)
+    if target is not None:  # the --goto target marker, flat on the desk
+        paste_marker(canvas, shared.TARGET_ID, target, CORNER_MM, 270)
     return canvas
 
 
@@ -182,6 +184,20 @@ def check_coordinates():
     worker._detect(camera_view(top_down()))
     check("object ids stay the same between frames",
           sorted(o["id"] for o in worker.objects) == ids, f"{ids}")
+
+    worker._detect(camera_view(top_down(target=(800, 420))))
+    target = worker.desk_frame.target
+    check("target marker position within 10 mm",
+          target is not None and math.dist((target["x"], target["y"]), (800, 420)) < 10,
+          "not found" if target is None else f"({target['x']:.0f}, {target['y']:.0f})")
+    check("the target marker is not an object",
+          len([o for o in worker.objects if "x" in o]) == 2, f"{len(worker.objects)} objects")
+    worker.link = messaging.PicoLink("loop://")
+    worker._send()
+    sent, _ = worker.link.latest_target()
+    worker.link = None
+    check("the target goes to the drive thread through the link",
+          sent is not None and math.dist((sent["x"], sent["y"]), (800, 420)) < 10)
 
     worker._detect(camera_view(top_down(hide_corner=2)))
     check("calibration kept when one corner is covered", worker.desk_frame.calibrated,
@@ -361,7 +377,8 @@ def check_drive():
     """The drive thread on the real link and the real Pico code (motors are stubs)."""
     def refresh(link, stop):  # stands in for the camera worker
         while not stop.wait(0.02):
-            link.update((1206, 597), True, {"x": 600.0, "y": 300.0, "hd": 0.0}, [])
+            link.update((1206, 597), True, {"x": 600.0, "y": 300.0, "hd": 0.0}, [],
+                        {"x": 900.0, "y": 300.0})  # target 30 cm straight ahead
 
     def drive(options, seconds):
         link, log, stop = FakeLink(FakePico(), send_hz=100), [], threading.Event()
@@ -374,6 +391,8 @@ def check_drive():
         link.stop()
         link.join(2)
         done = [m["cmd"]["do"] for m in link.pico.lines if m and m["cmd"]]
+        drive.move_ids = {m["cmd"]["id"] for m in link.pico.lines
+                          if m and m["cmd"] and m["cmd"]["do"] == "move"}
         return log, done, thread.is_alive()
 
     log, done, alive = drive(DriveOptions(check=True), 20)
@@ -388,6 +407,13 @@ def check_drive():
     check("--drive runs the policy, then stops the bot on quit",
           not alive and "move" in done and done[-1] == "stop"
           and any("ended (stopped)" in line for line in log), log[-1] if log else "no log")
+
+    log, done, alive = drive(DriveOptions(goto=True), 4)
+    # The bot never moves here, so it keeps stepping forward toward the target.
+    check("--goto drives toward the target marker, then stops on quit",
+          not alive and len(drive.move_ids) >= 2 and done[-1] == "stop"
+          and any("go-to-marker ended (stopped)" in line for line in log),
+          log[-1] if log else "no log")
 
     log, done, alive = drive(DriveOptions(policy="no_such_policy.npz"), 3)
     check("--drive reports a bad policy file in the log",

@@ -8,6 +8,7 @@ Run: python test_vision_bridge.py
 import numpy as np
 
 from env import DeskbotEnv
+from goto_marker import ARRIVE_CM, goto_marker, next_action
 from obs import travel_room
 from pi_inference import DeskbotPolicy
 from pi_runner import ObsBuilder, run
@@ -23,6 +24,7 @@ class FakeLink:
         self.visible = True     # False = the bot marker is hidden
         self.flip_turns = False  # True = turns wired backwards
         self.answer = True       # False = the Pico never says DONE
+        self.target_cm = None    # (x, y) of the target marker, or None = not seen
 
     def latest(self):
         e = self.env
@@ -33,6 +35,10 @@ class FakeLink:
         for p in e.pens:     # about 140 x 10 mm
             objs.append({"id": len(objs), "x": p[0] * 10, "y": p[1] * 10, "w": 140, "h": 10, "a": 1400})
         return ((e.W * 10, e.H * 10), True, bot if self.visible else None, objs), 0.0
+
+    def latest_target(self):
+        t = self.target_cm
+        return (None if t is None else {"x": t[0] * 10, "y": t[1] * 10}), 0.0
 
     def send_command(self, do, a=None):
         self.commands.append((do, a))
@@ -207,6 +213,56 @@ def test_movement_check():
     lines = []
     assert movement_check(hw, lines.append, pause=0.0) == 2
     assert any("step length" in line for line in lines)
+
+
+def test_goto_next_action():
+    east = 0.0
+    assert next_action((50, 30), east, (50 + ARRIVE_CM - 1, 30), 50) == "arrived"
+    assert next_action((50, 30), east, (90, 30), 50) == 0             # straight ahead
+    assert next_action((50, 30), east, (90, 45), 50) == 0             # 20 deg off: close enough
+    assert next_action((50, 30), east, (50, 60), 50) == 2             # +y is +90 deg
+    assert next_action((50, 30), east, (50, 0), 50) == 3              # -y is -90 deg
+    assert next_action((50, 30), np.deg2rad(350), (90, 40), 50) == 2  # wraps past 0
+    assert next_action((50, 30), east, (90, 30), 3.0) == "blocked"    # no room for a step
+
+
+def test_goto_reaches_target():
+    # Targets all over the desk, including behind the bot and near the edges.
+    for seed, target in enumerate([(100, 45), (20, 15), (60, 50), (110, 12), (25, 48)]):
+        e, link, hw = make(seed, randomize=False)
+        link.target_cm = target
+        result = goto_marker(hw, log=lambda text: None, follow=False, max_moves=150, poll=0)
+        distance = np.linalg.norm(e.pos - target)
+        assert result["reason"] == "arrived", (seed, target, result, e.pos)
+        assert distance <= ARRIVE_CM and e.edge_hits == 0, (seed, target, distance)
+        assert link.commands[-1][0] == "stop"
+
+
+def test_goto_follows_a_moved_target():
+    e, link, hw = make(1, randomize=False)
+    link.target_cm = (30, 30)
+    calls = []
+
+    def should_stop():
+        calls.append(1)
+        if len(calls) == 60:  # partway through: move the marker across the desk
+            link.target_cm = (95, 30)
+        return len(calls) > 200
+    result = goto_marker(hw, log=lambda text: None, should_stop=should_stop, poll=0)
+    assert result["reason"] == "stopped"
+    assert np.linalg.norm(e.pos - (95, 30)) <= ARRIVE_CM and e.edge_hits == 0
+
+
+def test_goto_waits_without_target_or_bot():
+    for hide in ("target", "bot"):
+        e, link, hw = make(0, randomize=False)
+        link.target_cm = None if hide == "target" else (90, 30)
+        link.visible = hide != "bot"
+        lines, calls = [], []
+        result = goto_marker(hw, log=lines.append, poll=0,
+                             should_stop=lambda: calls.append(1) or len(calls) > 20)
+        assert result == {"reason": "stopped", "moves": 0} and link.commands == []
+        assert len(lines) == 1 and hide in lines[0], lines  # logged once, not every poll
 
 
 if __name__ == "__main__":

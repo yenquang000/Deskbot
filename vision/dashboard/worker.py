@@ -37,6 +37,7 @@ GREEN = (0, 220, 0)
 YELLOW = (0, 220, 255)
 GREY = (150, 150, 150)
 WHITE = (255, 255, 255)
+MAGENTA = (255, 0, 255)  # the --goto target marker
 
 
 def _rounded(values):
@@ -234,7 +235,9 @@ class CameraWorker(threading.Thread):
         # an object. The bot's marker is left in: it joins the bot's body into a
         # single blob, which is then recognised as the bot and skipped below.
         exclude = None
-        corner_quads = [q for i, q in info.outlines.items() if i in shared.CORNER_IDS]
+        # The target marker (--goto) is not an object either.
+        paper_ids = (*shared.CORNER_IDS, shared.TARGET_ID)
+        corner_quads = [q for i, q in info.outlines.items() if i in paper_ids]
         if corner_quads:
             exclude = np.zeros((height, width), np.uint8)
             for quad in corner_quads:
@@ -294,8 +297,11 @@ class CameraWorker(threading.Thread):
         info = self.desk_frame
         calibrated = info is not None and info.calibrated
         mm_objects = [o for o in self.objects if "x" in o]
+        target = None
+        if calibrated and info.target is not None:
+            target = {"x": info.target["x"], "y": info.target["y"]}
         self.link.update((self.settings.desk_width_mm, self.settings.desk_height_mm),
-                         calibrated, info.bot if calibrated else None, mm_objects)
+                         calibrated, info.bot if calibrated else None, mm_objects, target)
 
     # ----- drawing ---------------------------------------------------------
 
@@ -314,6 +320,8 @@ class CameraWorker(threading.Thread):
                 _text(shown, str(marker_id), (int(cx) + 8, int(cy) - 8), color)
             if info.bot is not None:
                 self._draw_bot(shown, info.bot, t["grid"])
+            if info.target is not None:
+                self._draw_target(shown, info.target, t["grid"])
 
         for obj in self.objects:
             x, y, w, h = obj["box_px"]
@@ -364,6 +372,16 @@ class CameraWorker(threading.Thread):
         # Below the marker, clear of the heading arrow.
         left, bottom = bot["quad_px"][:, 0].min(), bot["quad_px"][:, 1].max()
         _text(image, label, (int(left), int(bottom) + 16), (255, 160, 0))
+
+    @staticmethod
+    def _draw_target(image, target, labels):
+        cx, cy = (int(v) for v in target["px"])
+        cv2.drawMarker(image, (cx, cy), MAGENTA, cv2.MARKER_CROSS, 28, 3)
+        cv2.circle(image, (cx, cy), 18, MAGENTA, 2)
+        label = "target"
+        if labels:
+            label += f" {target['x']:.0f},{target['y']:.0f}"
+        _text(image, label, (cx + 22, cy - 10), MAGENTA)
 
     def _publish(self, image):
         ok, buffer = cv2.imencode(

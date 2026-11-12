@@ -52,6 +52,7 @@ an optional "cmd" field, and the Pico answers "DONE <id>" when it has finished:
 ARUCO_DICT = "DICT_4X4_50"
 CORNER_IDS = (0, 1, 2, 3)  # origin, +x corner, far corner, +y corner
 BOT_ID = 4
+TARGET_ID = 5  # put it on the desk and run `python main.py --goto`: the bot drives to it
 
 # Default desk size: distance between corner marker centres, in mm. This is the
 # desk the policy in sim/ was trained on (Measurements in sim/env.py: 120.65 x

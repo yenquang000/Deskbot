@@ -70,6 +70,10 @@ def parse_args():
         help="run each move once and compare it with the camera, instead of the policy",
     )
     parser.add_argument(
+        "--goto", action="store_true",
+        help="drive the bot to the target ArUco marker (ID 5) and follow it when it moves",
+    )
+    parser.add_argument(
         "--clean-on-arrival", action="store_true",
         help="with --drive: send a clean command when the bot reaches debris",
     )
@@ -81,10 +85,14 @@ def parse_args():
 
 def drive_options(args):
     """DriveOptions from the command line, or None when the bot isn't driven."""
-    if not args.drive and not args.drive_check:
+    if not args.drive and not args.drive_check and not args.goto:
         return None
     if args.window:
-        raise ValueError("--drive and --drive-check need the dashboard, not --window")
+        raise ValueError("--drive, --drive-check and --goto need the dashboard, not --window")
+    if args.goto and (args.drive or args.drive_check):
+        raise ValueError("use one of --drive, --drive-check or --goto")
+    if args.goto:
+        return DriveOptions(goto=True)
     if args.drive and not args.drive_check and not Path(args.drive).is_file():
         raise ValueError(f"policy file not found: {args.drive}")
     return DriveOptions(policy=args.drive, check=args.drive_check,

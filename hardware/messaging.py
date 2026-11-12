@@ -90,6 +90,7 @@ class PicoLink(threading.Thread):
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._state = None  # (desk_size, calibrated, bot, objects)
+        self._target = None  # {"x", "y"} of the target marker in mm, or None (Pi only)
         self._state_time = 0.0  # time.monotonic() of the last update()
         # Command state has its own lock so the policy thread (send_command,
         # wait_done) and the send thread never wait on each other through _lock.
@@ -118,11 +119,23 @@ class PicoLink(threading.Thread):
                 self._close()
             self.send_hz = send_hz
 
-    def update(self, desk_size, calibrated, bot, objects):
-        """Hand over the newest coordinates; only the latest is ever sent."""
+    def update(self, desk_size, calibrated, bot, objects, target=None):
+        """
+        Hand over the newest coordinates; only the latest is ever sent. `target`
+        (the target marker, for --goto) stays on the Pi: it isn't sent to the Pico.
+        """
         with self._lock:
             self._state = (desk_size, calibrated, bot, objects)
+            self._target = target
             self._state_time = time.monotonic()
+
+    def latest_target(self):
+        """The target marker {"x", "y"} (mm) from the newest update() and its age
+        in seconds; (None, age) when it wasn't seen, (None, None) before any update."""
+        with self._lock:
+            if self._state is None:
+                return None, None
+            return self._target, time.monotonic() - self._state_time
 
     def latest(self):
         """

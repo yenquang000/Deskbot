@@ -27,6 +27,7 @@ NAMES = {
     2: "corner2_far",
     3: "corner3_plus_y",
     shared.BOT_ID: "bot",
+    shared.TARGET_ID: "target",
 }
 
 

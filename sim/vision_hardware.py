@@ -65,6 +65,16 @@ class VisionHardware(RobotHardware):
         bot = state[2]
         return np.array([bot["x"], bot["y"]]) / 10.0, float(wrap(np.deg2rad(bot["hd"])))
 
+    def target(self):
+        """The target marker's (x, y) in cm from the camera, or None if it isn't
+        visible or the data is stale. Used by goto_marker.py."""
+        if self._state() is None:
+            return None
+        target, age = self.link.latest_target()
+        if target is None or age > MAX_POSE_AGE_S:
+            return None
+        return np.array([target["x"], target["y"]]) / 10.0
+
     def desk_cm(self):
         """(W, H) in cm: the distance between corner marker centres. None before any data."""
         state, _ = self.link.latest()

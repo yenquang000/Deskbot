@@ -1,6 +1,6 @@
 """
-The "drive" thread: runs the trained policy from sim/ (or the movement check)
-on the coordinates the camera worker hands to the Pico link.
+The "drive" thread: runs the trained policy from sim/ (or the movement check,
+or go-to-marker) on the coordinates the camera worker hands to the Pico link.
 
 The loop is sim/pi_runner.run() with sim/vision_hardware.VisionHardware: the
 camera gives the pose and the objects, the Pico carries out one move at a time.
@@ -20,6 +20,7 @@ class DriveOptions:
     check: bool = False  # run the movement check instead (--drive-check)
     guard: bool = True  # edge guard (--no-guard turns it off)
     clean_on_arrival: bool = False
+    goto: bool = False  # drive to the target marker instead (--goto)
 
 
 def start_drive(link, options, log, stop_event):
@@ -41,10 +42,19 @@ def _drive(link, options, log, stop_event):
         from pi_runner import run
         from vision_hardware import VisionHardware, movement_check
 
-        policy = None if options.check else DeskbotPolicy(options.policy)
+        policy = None if options.check or options.goto else DeskbotPolicy(options.policy)
         hw = VisionHardware(link, log=lambda text: log(f"Drive: {text}", "warn"))
+        if options.goto:
+            hw._desk_checked = True  # the desk-size warning is about the policy
         log("Drive: waiting for the 4 corner markers and the bot marker.")
         if not hw.wait_ready(stop_event.is_set):
+            return
+        if options.goto:
+            from goto_marker import goto_marker
+            log("Drive: go-to-marker started: driving to the target marker (ID 5).", "ok")
+            result = goto_marker(hw, lambda text: log(f"Drive: {text}"), stop_event.is_set)
+            log(f"Drive: go-to-marker ended ({result['reason']}) after "
+                f"{result['moves']} moves.")
             return
         if options.check:
             log("Drive: movement check started (forward, backward, turn +, turn -).")

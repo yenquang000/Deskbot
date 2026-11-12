@@ -17,7 +17,7 @@ EDGE_PAD = 16  # pixels added around the frame before looking for markers
 class DeskFrame:
     """The result of one marker update: calibration, bot pose and marker outlines."""
 
-    def __init__(self, homography, size_mm, corners_px, visible, bot, outlines):
+    def __init__(self, homography, size_mm, corners_px, visible, bot, outlines, target=None):
         self.homography = homography  # pixels -> mm, or None if not calibrated
         self.inverse = None if homography is None else np.linalg.inv(homography)
         self.size_mm = size_mm  # (width, height)
@@ -25,6 +25,7 @@ class DeskFrame:
         self.visible = visible  # corner ids seen in this frame
         self.bot = bot  # {"x", "y", "hd", "px": (x, y), "tip_px": (x, y)} or None
         self.outlines = outlines  # {marker id: pixel outline (4x2)} seen in this frame
+        self.target = target  # {"x", "y", "px": (x, y)} of the target marker, or None
 
     @property
     def calibrated(self):
@@ -89,6 +90,10 @@ class MarkerTracker:
                                None, found)
         if homography is not None and shared.BOT_ID in found:
             frame_info.bot = self._bot_pose(frame_info, found[shared.BOT_ID])
+        if homography is not None and shared.TARGET_ID in found:
+            centre_px = found[shared.TARGET_ID].mean(axis=0)
+            x, y = frame_info.to_desk([centre_px])[0]
+            frame_info.target = {"x": float(x), "y": float(y), "px": tuple(centre_px)}
         return frame_info
 
     @staticmethod
