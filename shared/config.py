@@ -35,7 +35,10 @@ an optional "cmd" field, and the Pico answers "DONE <id>" when it has finished:
   "cmd": {"id": 81723, "do": "move",  "a": 0}     a = action 0-3
   "cmd": {"id": 81724, "do": "clean", "a": 1500}  a = milliseconds
   "cmd": {"id": 81725, "do": "stop",  "a": null}
+  "cmd": {"id": 81726, "do": "spin",  "a": 10000} a = milliseconds (test only)
 
+  spin: both wheels forward for a ms (negative = backward), up to 30 s. A test
+  command for the wheels; it stops early if messages stop or a new command arrives.
   move actions: 0 forward 5 cm, 1 backward 5 cm, 2 heading +45 deg, 3 heading -45 deg
   (the step sizes of Measurements in sim/env.py). +45 makes hd increase.
   - Only one command is pending at a time; a new one replaces an unfinished one.

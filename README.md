@@ -8,7 +8,7 @@ carries the move out.
 | Folder | What it holds |
 |---|---|
 | `vision/` | Camera, computer vision, browser dashboard and the Pi → Pico link (see below) |
-| `hardware/` | `messaging.py` (Pi side of the USB link) and `pico_controller.py` (the Pico's program) |
+| `hardware/` | `messaging.py` (Pi side of the serial link, GPIO or USB) and `pico_controller.py` (the Pico's program) |
 | `shared/` | `config.py`: marker IDs, coordinate system and message format used by everything |
 | `sim/` | Simulation, training, and the control loop that drives the real bot (`pi_runner.py`, `vision_hardware.py`) |
 
@@ -237,6 +237,7 @@ When the bot is being driven (`--drive`), a message can also carry one command:
 | `move` | action 0–3 | 0 forward 5 cm, 1 backward 5 cm, 2 heading +45°, 3 heading −45° |
 | `clean` | milliseconds | Runs the cleaner for that long |
 | `stop` | `null` | Stops the motors |
+| `spin` | milliseconds | Test only: both wheels forward for that long (negative = backward, at most 30 s). Stops early if the Pi's messages stop or another command arrives |
 
 The Pi repeats the command in every message until the Pico prints `DONE <id>`, then
 leaves `cmd` out again. The Pico carries out each id once. Only one command is pending
@@ -253,12 +254,35 @@ mpremote cp hardware/pico_controller.py :main.py
 ```
 
 (or open it in Thonny and save it to the Pico as `main.py`). The Pico makes no
-decisions: it carries out the commands from the Pi and prints `DONE <id>`. The motor
-and cleaner code goes in four stubs that are still **TODO**: `drive_cm(cm)`,
-`turn_deg(deg)`, `run_cleaner(ms)` and `stop()`. A positive `turn_deg` must make the
-camera's heading increase (clockwise seen from a camera looking down). The Pico calls
-`stop()` by itself if no message arrives for 0.5 s, and reports back every 2 s; the
-replies appear in the dashboard's Pico section.
+decisions: it carries out the commands from the Pi and prints `DONE <id>`. The Pico
+calls `stop()` by itself if no message arrives for 0.5 s, and reports back every 2 s;
+the replies appear in the dashboard's Pico section.
+
+**Link.** By default (`LINK = "uart"`) the Pico talks to the Pi over GPIO serial:
+Pico GP0 → Pi GPIO15 (pin 10), Pico GP1 ← Pi GPIO14 (pin 8), and a shared GND. The Pi
+needs `dtparam=uart0=on` in `/boot/firmware/config.txt`; `messaging.py` then finds
+`/dev/ttyAMA0` by itself when no USB Pico is plugged in. Set `LINK = "usb"` to use the
+USB cable instead.
+
+**Motors.** A TB6612FNG drives the two N20 motors (wiring from the Drive Test sheet):
+GP16 PWMA, GP17/GP18 AIN1/AIN2 (left), GP19/GP20 BIN1/BIN2 (right), GP21 PWMB,
+GP22 STBY. Speed ramps up and down (0 to full in about 0.25 s) to keep the start-up
+current under the battery's cutoff. The encoders aren't connected yet, so moves are
+**timed**: `CM_PER_S` and `DEG_PER_S` at the top of the file are estimates to
+calibrate with `python main.py --drive-check` (the file explains the arithmetic).
+If a wheel turns the wrong way, set `LEFT_REVERSED` or `RIGHT_REVERSED`. A positive
+`turn_deg` makes the camera's heading increase (left wheel forward, right backward).
+`PIN_CLEANER` is `None` until the vacuum MOSFET is wired; `clean` then just waits.
+
+**Wheel test** (wheels off the ground; stop the dashboard first, since only one
+program can use the link):
+
+```
+cd vision
+python tools/wheel_test.py              # link check only, nothing moves
+python tools/wheel_test.py 0 1 2 3      # each move once: forward, back, turn +, turn -
+python tools/wheel_test.py spin 10      # both wheels forward for 10 s (spin -10: backward)
+```
 
 ### Driving the bot
 

@@ -1,11 +1,12 @@
 """
 Pi side of the Pi -> Pico link: builds the coordinate messages and sends them
-over USB serial from a background thread. The message format and coordinate
+over serial (USB, or the Pi's GPIO UART) from a background thread. The message format and coordinate
 system are described in shared/config.py; the Pico side is pico_controller.py.
 """
 
 import glob
 import json
+import os
 import random
 import threading
 import time
@@ -45,8 +46,16 @@ def encode(seq, desk_size, calibrated, bot, objects, cmd=None):
     return (json.dumps(message, separators=(",", ":")) + "\n").encode()
 
 
+# The Raspberry Pi's GPIO serial port (GPIO14 TXD, GPIO15 RXD) once
+# `dtparam=uart0=on` is in /boot/firmware/config.txt. Used when no USB Pico is found.
+GPIO_UART_PORT = "/dev/ttyAMA0"
+
+
 def find_pico_port():
-    """The first USB serial port that looks like a Pico, or None."""
+    """
+    The first USB serial port that looks like a Pico, else the Pi's GPIO
+    serial port if it is enabled, else None.
+    """
     ports = sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/cu.usbmodem*"))
     if ports:
         return ports[0]
@@ -57,6 +66,8 @@ def find_pico_port():
                 return port.device
     except ImportError:
         pass
+    if os.path.exists(GPIO_UART_PORT):
+        return GPIO_UART_PORT
     return None
 
 
@@ -190,7 +201,8 @@ class PicoLink(threading.Thread):
     def _open(self):
         port = find_pico_port() if self.port_setting == "auto" else self.port_setting
         if port is None:
-            self.last_error = "No Pico found (is it plugged in by USB?)"
+            self.last_error = (f"No Pico found (plug it in by USB, or enable the GPIO "
+                               f"serial port {GPIO_UART_PORT} with dtparam=uart0=on)")
             return False
         try:
             # serial_for_url also accepts test URLs such as "loop://".
