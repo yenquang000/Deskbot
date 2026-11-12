@@ -12,10 +12,20 @@ import numpy as np
 
 from obs import travel_room, wrap
 
-ARRIVE_CM = 18.0  # stop when the bot centre is this close (robot radius 10 + a step + 3)
-RESUME_CM = 28.0  # follow mode: set off again once the target is this far away
-AIM_DEG = 22.5    # step forward when the target is within this of the heading
-                  # (half a turn, so a turn always brings it back inside)
+# Stop when the bot centre is this close to the target: robot radius 10 + half
+# the printed marker with its white border (about 5) + one 5 cm step + 2. Closer,
+# the last step can put the bot's body over the marker and the camera loses it.
+ARRIVE_CM = 22.0
+RESUME_CM = 32.0  # follow mode: set off again once the target is this far away
+# If the target vanishes while the bot is this close to where it was last seen,
+# the bot is covering it: count that as arrived rather than waiting forever.
+HIDDEN_CM = ARRIVE_CM + 5.0
+# Step forward when the target is within AIM_DEG of the heading, else turn 45.
+# It must be more than half a turn (22.5): at exactly half, a target halfway
+# between two 45 deg headings is out of reach from both and the bot turns back
+# and forth forever. At 30, a turn from anywhere in 30..75 deg off lands within
+# -15..30 (and still inside with a 20% turn error), so it never flips back.
+AIM_DEG = 30.0
 
 
 def next_action(pos, theta, target, front_room):
@@ -43,6 +53,7 @@ def goto_marker(hw, log=print, should_stop=None, follow=True, max_moves=None, po
     """
     should_stop = should_stop or (lambda: False)
     moves, arrived, waiting = 0, False, None
+    last_target = None  # where the target was last seen, cm
 
     def wait(reason, message):
         nonlocal waiting
@@ -58,18 +69,27 @@ def goto_marker(hw, log=print, should_stop=None, follow=True, max_moves=None, po
         if pose is None:
             wait("bot", "Can't see the bot marker: waiting.")
             continue
-        if target is None:
-            wait("target", "Can't see the target marker (ID 5): waiting.")
-            continue
         pos, theta = pose
+        hidden = False
+        if target is None:
+            near = (last_target is not None
+                    and float(np.hypot(*(last_target - pos))) <= HIDDEN_CM)
+            if arrived or not near:
+                wait("target", "Can't see the target marker (ID 5): waiting.")
+                continue
+            target, hidden = last_target, True  # the bot is on top of it
+        last_target = target
         distance = float(np.hypot(*(target - pos)))
         if arrived and distance < RESUME_CM:
             time.sleep(poll)  # still at the target
             continue
         W, H = hw.desk_cm()
         action = next_action(pos, theta, target, travel_room(pos, theta, W, H, hw.m.robot_radius))
+        if hidden:
+            action = "arrived"
         if action == "arrived":
-            log(f"Reached the target ({distance:.0f} cm away) after {moves} moves."
+            log(f"Reached the target ({distance:.0f} cm away"
+                + (", the bot is covering it" if hidden else "") + f") after {moves} moves."
                 + (" Move the marker and the bot will follow." if follow else ""))
             hw.stop()
             if not follow:

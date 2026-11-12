@@ -394,28 +394,37 @@ def open_link():
 
 def _receive():
     """
-    Read everything that has arrived without waiting and return the complete,
-    valid messages in order. Updates _last_rx for each one.
+    Read everything that has arrived without waiting and return the newest
+    valid message as a one-item list ([] if none). Updates _last_rx.
+
+    Each message is a complete snapshot and the Pi repeats a pending command in
+    every one, so only the newest line matters: the lines that queued up behind
+    it while a move blocked are dropped without parsing. The input is split on
+    whole lines, not built up a character at a time, which on the Pico would
+    copy the line again for every character.
     """
     global _rx_buffer, _last_rx
-    messages = []
     while True:
         text = _reader()
         if not text:
-            return messages
-        for char in text:
-            if char == "\n":
-                message = parse(_rx_buffer)
-                _rx_buffer = ""
-                if message is None:
-                    send("ERR bad message")
-                    continue
-                _last_rx = ticks_ms()
-                messages.append(message)
-            elif len(_rx_buffer) < 4000:
-                _rx_buffer += char
-            else:
-                _rx_buffer = ""  # a line that long is garbage; start over
+            break
+        _rx_buffer += text
+    end = _rx_buffer.rfind("\n")
+    if end < 0:
+        if len(_rx_buffer) > 4000:
+            _rx_buffer = ""  # a line that long is garbage; start over
+        return []
+    lines = _rx_buffer[:end].split("\n")
+    _rx_buffer = _rx_buffer[end + 1:]
+    for line in reversed(lines):  # newest first; older ones only if it's garbled
+        if not line:
+            continue
+        message = parse(line)
+        if message is not None:
+            _last_rx = ticks_ms()
+            return [message]
+        send("ERR bad message")
+    return []
 
 
 def main():

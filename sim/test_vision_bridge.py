@@ -222,8 +222,13 @@ def test_goto_next_action():
     assert next_action((50, 30), east, (90, 45), 50) == 0             # 20 deg off: close enough
     assert next_action((50, 30), east, (50, 60), 50) == 2             # +y is +90 deg
     assert next_action((50, 30), east, (50, 0), 50) == 3              # -y is -90 deg
-    assert next_action((50, 30), np.deg2rad(350), (90, 40), 50) == 2  # wraps past 0
+    assert next_action((50, 30), np.deg2rad(350), (90, 50), 50) == 2  # wraps past 0
     assert next_action((50, 30), east, (90, 30), 3.0) == "blocked"    # no room for a step
+    # A target halfway between two 45 deg headings (here 157.5 deg) must not make the
+    # bot turn back and forth between 135 and 180 forever.
+    target = (50 + 40 * np.cos(np.deg2rad(157.5)), 30 + 40 * np.sin(np.deg2rad(157.5)))
+    for heading in (135, 180):
+        assert next_action((50, 30), np.deg2rad(heading), target, 50) == 0, heading
 
 
 def test_goto_reaches_target():
@@ -251,6 +256,23 @@ def test_goto_follows_a_moved_target():
     result = goto_marker(hw, log=lambda text: None, should_stop=should_stop, poll=0)
     assert result["reason"] == "stopped"
     assert np.linalg.norm(e.pos - (95, 30)) <= ARRIVE_CM and e.edge_hits == 0
+
+
+def test_goto_counts_a_covered_target_as_arrived():
+    e, link, hw = make(0, randomize=False)
+    e.pos, e.theta = np.array([60.0, 30.0]), 0.0
+    link.target_cm = (60 + ARRIVE_CM + 3, 30)  # one more step to go
+    real_step = e.step
+
+    def step_and_cover(action):  # the bot's body hides the marker after the step
+        out = real_step(action)
+        link.target_cm = None
+        return out
+    e.step = step_and_cover
+    lines = []
+    result = goto_marker(hw, log=lines.append, follow=False, max_moves=5, poll=0)
+    assert result == {"reason": "arrived", "moves": 1}, result
+    assert "covering it" in lines[-1], lines
 
 
 def test_goto_waits_without_target_or_bot():

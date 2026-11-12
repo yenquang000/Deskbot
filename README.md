@@ -325,9 +325,10 @@ the centre of the robot.
 **Go to a marker** (`--goto`). The simplest way to see the bot move under camera
 control. Lay marker 5 flat on the desk and the bot drives to it, one move at a time
 (the same 5 cm steps and 45° turns as the policy). Each move it either turns toward
-the marker, when the marker is more than 22.5° off its heading, or steps forward. It
-stops when its centre is 18 cm from the marker, so it doesn't drive over and hide it.
-Move the marker more than 28 cm away and the bot follows. It never steps forward off the
+the marker, when the marker is more than 30° off its heading, or steps forward. It
+stops when its centre is 22 cm from the marker, so it doesn't drive over and hide it
+(if the marker does get covered right next to the bot, that counts as arrived).
+Move the marker more than 32 cm away and the bot follows. It never steps forward off the
 desk: a target too close to an edge makes it wait. If the bot or target marker can't be
 seen it waits, and logs once. The target is drawn in magenta on the video and isn't
 counted as an object. The steering is in `sim/goto_marker.py`; stop with Ctrl+C.
@@ -359,11 +360,16 @@ cd vision
 python tools/test_filters.py                     # filter pipeline (15 checks)
 python tools/test_filters.py --save-debug out    # also writes a picture of every stage
 python tools/test_coordinates.py                 # markers, mm coordinates, Pico link, commands, --goto (34 checks)
+python tools/test_closed_loop.py                 # whole chain on a simulated bot (16 checks, about 1 min)
 cd ../sim
 python test_vision_bridge.py                     # vision -> policy / --goto -> commands against the simulator
 ```
 
-Both use generated images, so no camera or Pico is needed. They exit with 0 when every
+They use generated images, so no camera or Pico is needed. `test_closed_loop.py` runs
+the real Pico program (fake `machine.Pin`/`PWM`) on a simulated bot whose wheels follow
+the TB6612 pins, renders what the camera would see, and drives it with `--drive-check`,
+`--goto` and `--drive` through the real vision code: it checks the pin wiring, the wheel
+and turn directions, `LEFT/RIGHT_REVERSED` and the Pico's line reader. They exit with 0 when every
 check passes.
 
 ### Troubleshooting
