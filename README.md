@@ -34,15 +34,19 @@ vision/
 ├── dashboard/
 │   ├── server.py         the Flask web server and its API
 │   ├── worker.py         background thread: camera -> detection -> drawing -> Pico
-│   ├── drive.py          background thread for --drive: runs the sim/ policy on the bot
+│   ├── drive.py          DriveManager and the drive thread: runs the sim/ policy on the bot
 │   ├── viewer.py         the plain OpenCV window (--window)
 │   ├── templates/        dashboard.html
 │   └── static/           dashboard.css, dashboard.js
 └── tools/
     ├── make_markers.py   prints the ArUco markers
     ├── test_filters.py   checks for the filter pipeline
-    └── test_coordinates.py  checks for markers, coordinates, the Pico link and commands
+    ├── test_coordinates.py  checks for markers, coordinates, the Pico link and commands
+    └── test_drive_api.py    checks for the Drive panel's API and DriveManager
 ```
+
+`deploy/deskbot.service` (repo root) starts the program when the Pi boots: see
+*Start on boot*.
 
 Files created while running (all ignored by git): `vision/settings.json` (saved
 settings), `vision/captures/` (snapshots) and `vision/markers/` (printed markers).
@@ -100,6 +104,7 @@ The right-hand column shows:
   - Score heatmap, Mask, Highlight differences: the detector's actual results
   - Grid & labels, FPS counter, Learned area: overlays
 - **Bot**: its position and heading.
+- **Drive**: starts and stops the bot (see *Drive panel*).
 - **Objects**: ID, centre, size and covered area of each flagged object, in mm once
   the desk is calibrated (in pixels before that).
 - **Settings** (folded): every tuning value, applied live with **Apply** and kept
@@ -315,7 +320,8 @@ python main.py --goto                               # drive to the target marker
 | `--clean-on-arrival` | Also sends a `clean` command when a move ends on top of debris (off by default; the cleaner is assumed to run while the bot drives) |
 | `--no-guard` | Turns the edge guard off (it is on by default: it overrides any move that would leave the desk) |
 
-Without these flags the program behaves exactly as before and never commands the bot.
+The flags still work and start that mode at launch. Without them the program starts
+idle and the bot only moves when a mode is started from the dashboard's Drive panel.
 The policy needs only NumPy on the Pi. Start, end reason (goal reached, max steps, bot
 lost, stopped), steps, coverage, edge guard interventions and errors appear in the
 dashboard log. The pose always comes from the camera: if the bot marker or a corner
@@ -331,7 +337,40 @@ stops when its centre is 22 cm from the marker, so it doesn't drive over and hid
 Move the marker more than 32 cm away and the bot follows. It never steps forward off the
 desk: a target too close to an edge makes it wait. If the bot or target marker can't be
 seen it waits, and logs once. The target is drawn in magenta on the video and isn't
-counted as an object. The steering is in `sim/goto_marker.py`; stop with Ctrl+C.
+counted as an object. The steering is in `sim/goto_marker.py`; stop with the Drive
+panel's STOP or Ctrl+C.
+
+#### Drive panel
+
+The **Drive** section of the dashboard, under **Bot**, starts and stops every mode
+without restarting the program, so the Pi needs no SSH session once it is running:
+
+| Control | Does |
+|---|---|
+| Drive check | Same as `--drive-check` |
+| Go to marker | Same as `--goto` |
+| Run policy | Same as `--drive`, with the policy chosen in the **Policy** list |
+| Policy | The `*.npz` files directly in `sim/`. Copy a new export there to offer it |
+| Edge guard | On by default. Turning it off asks for confirmation (`--no-guard`) |
+| Clean on arrival | Same as `--clean-on-arrival` |
+| STOP (or Space) | Sends `stop` to the Pico straight away, then ends the mode. Always enabled; pressing it while idle is harmless |
+
+The heading shows `Idle` or the running mode, and the line under STOP shows how the last
+mode ended (for example `policy ended (goal reached) after 214 steps, coverage 81%`).
+Only one mode runs at a time: the start buttons are disabled while one runs, so stop it
+before starting another. Quit also stops the bot first. Space is ignored while typing in
+a Settings field.
+
+The same controls as an API: `POST /api/drive/start` with
+`{"mode": "check" | "goto" | "policy", "policy": "deskbot_policy.npz", "guard": true,
+"clean_on_arrival": false}` (409 if a mode is already running, 400 for an unknown mode
+or a policy name not in `sim/`), `POST /api/drive/stop`, and the `drive` entry of
+`GET /api/status`.
+
+Closing the dashboard tab does not stop the bot: a running mode continues until it ends
+or STOP is pressed from any device. The dashboard has no login, so anyone on the same
+network can drive the bot when it runs with `--host 0.0.0.0`: fine on a home or lab
+network, not on a shared one.
 
 Objects are split into pens and debris by shape: a pen has a long side of at least
 80 mm and is either 3 times longer than wide or fills less than 35% of its box (a
@@ -353,6 +392,55 @@ steps and 45° turns (`Measurements` in `sim/env.py`). The default marker spacin
 spacing set in the dashboard differs by more than 5%, the log shows a warning: match the marker spacing
 to the training desk, or set `Measurements` to the real desk and retrain.
 
+### Start on boot
+
+On the Pi 5 a systemd service starts the program about 20–30 s after power-on, idle,
+and restarts it if it crashes. The Pico needs nothing extra: it runs its `main.py`
+(the copied `pico_controller.py`) whenever it has power. The examples assume the Pi
+user is `deskbot` and the repo is at `/home/deskbot/Deskbot`; if not, change them here
+and in `deploy/deskbot.service` (`User`, `WorkingDirectory`, `ExecStart`).
+
+One-time setup:
+
+1. Virtual environment that can see `picamera2`:
+   ```
+   cd ~/Deskbot/vision
+   python3 -m venv --system-site-packages .venv
+   .venv/bin/pip install -r requirements.txt
+   ```
+2. GPIO UART for the Pico link: add `dtparam=uart0=on` to `/boot/firmware/config.txt`,
+   and in `sudo raspi-config` → Interface Options → Serial Port answer **No** (login
+   shell) then **Yes** (hardware). Reboot.
+3. Permissions for the camera and the serial port: `sudo usermod -aG video,dialout deskbot`,
+   then log out and back in.
+4. Hostname: `sudo raspi-config` → System Options → Hostname → `deskbot`. The dashboard
+   is then at `http://deskbot.local:8000` from any device on the same Wi-Fi.
+5. Run it by hand once: `.venv/bin/python main.py --host 0.0.0.0 --no-browser`.
+
+Install and enable the service:
+
+```
+cd ~/Deskbot
+sudo cp deploy/deskbot.service /etc/systemd/system/deskbot.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now deskbot     # start now and on every boot
+systemctl status deskbot                # running?
+journalctl -u deskbot -f                # live log
+```
+
+| Task | Command |
+|---|---|
+| Use the bot | Open `http://deskbot.local:8000`, no SSH |
+| Update the code | `cd ~/Deskbot && git pull && sudo systemctl restart deskbot` |
+| Stop it for manual testing (`wheel_test.py`) | `sudo systemctl stop deskbot`: only one program can use the serial link |
+| Turn auto-start off | `sudo systemctl disable --now deskbot` |
+
+The service passes no drive flag, so a power cut and restart never sends the bot
+driving. `systemctl stop` sends Ctrl+C (SIGINT), which stops the bot and closes the link
+before the program exits. If the camera isn't ready at boot the program exits with 1 and
+systemd retries every 5 s. The dashboard's **Quit** exits with 0, so systemd does not
+restart it: bring it back with `sudo systemctl start deskbot` or a power cycle.
+
 ### Tests
 
 ```
@@ -361,6 +449,7 @@ python tools/test_filters.py                     # filter pipeline (15 checks)
 python tools/test_filters.py --save-debug out    # also writes a picture of every stage
 python tools/test_coordinates.py                 # markers, mm coordinates, Pico link, commands, --goto (34 checks)
 python tools/test_closed_loop.py                 # whole chain on a simulated bot (16 checks, about 1 min)
+python tools/test_drive_api.py                   # Drive panel API and DriveManager (30 checks)
 cd ../sim
 python test_vision_bridge.py                     # vision -> policy / --goto -> commands against the simulator
 ```
@@ -404,6 +493,8 @@ check passes.
   coordinates over USB 10 times a second.
 - **Driving** (`--drive`, `--drive-check`): the policy from `sim/` runs in a thread of
   the vision program and commands the Pico one move at a time.
+- **Drive panel** and `DriveManager` (`dashboard/drive.py`): modes are started, stopped
+  and switched from the dashboard; `deploy/deskbot.service` starts the program at boot.
 - **Settings** can be changed live in the dashboard and saved to `vision/settings.json`.
 - **Tests** in `vision/tools/` check the filters, coordinates and Pico messages without
   a camera.

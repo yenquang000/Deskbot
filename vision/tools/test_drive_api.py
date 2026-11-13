@@ -10,7 +10,9 @@ Usage (from the vision folder):
 """
 
 import json
+import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -261,7 +263,34 @@ def check_cli_path():
         check(f"{label} shuts down cleanly on Quit", not thread.is_alive() and out == [0], out)
 
 
+def check_sigint():
+    """systemd stops the service with SIGINT (KillSignal=SIGINT in deskbot.service):
+    that must stop the bot and exit with 0, like Ctrl+C."""
+    port = free_port()
+    process = subprocess.Popen([sys.executable, "-u", __file__, "--serve", str(port)],
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    def running():
+        try:
+            return http(port, "/api/status")["drive"]["running"]
+        except OSError:
+            return False
+    up = wait_until(running, 15)
+    process.send_signal(signal.SIGINT)
+    try:
+        output = process.communicate(timeout=15)[0]
+    except subprocess.TimeoutExpired:
+        process.kill()
+        output = process.communicate()[0]
+    check("SIGINT while driving stops the dashboard cleanly and exits with 0",
+          up and process.returncode == 0 and "Dashboard stopped" in output,
+          (up, process.returncode, output.strip().splitlines()[-1:]))
+
+
 def main():
+    if sys.argv[1:2] == ["--serve"]:  # helper process for check_sigint
+        return run_dashboard(BlankCamera(), "127.0.0.1", int(sys.argv[2]),
+                             open_browser=False, drive=DriveOptions(goto=True))
     check_start_and_status()
     check_bad_requests()
     check_restartable()
@@ -269,6 +298,7 @@ def main():
     check_results()
     check_quit()
     check_cli_path()
+    check_sigint()
     print(f"\n{sum(results)}/{len(results)} checks passed")
     return 0 if all(results) else 1
 

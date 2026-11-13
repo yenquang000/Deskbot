@@ -1,0 +1,33 @@
+# Starts the Deskbot vision program and dashboard when the Pi boots.
+# See "Start on boot" in the README. This file assumes the Pi user is `deskbot`
+# and the repo is at /home/deskbot/Deskbot: change User, WorkingDirectory and
+# ExecStart if yours differ.
+#
+# Install:
+#   sudo cp deploy/deskbot.service /etc/systemd/system/deskbot.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now deskbot
+
+[Unit]
+Description=Deskbot vision and dashboard
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=deskbot
+SupplementaryGroups=video dialout
+WorkingDirectory=/home/deskbot/Deskbot/vision
+Environment=PYTHONUNBUFFERED=1
+# No --drive, --drive-check or --goto: the bot boots idle and only moves after
+# someone presses a button in the dashboard.
+ExecStart=/home/deskbot/Deskbot/vision/.venv/bin/python main.py --host 0.0.0.0 --no-browser
+# Retries every 5 s if the camera isn't ready yet (main.py exits with 1).
+Restart=on-failure
+RestartSec=5
+# Ctrl+C, not SIGTERM: main.py's KeyboardInterrupt path stops the bot and closes the link.
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
