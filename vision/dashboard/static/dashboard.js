@@ -85,12 +85,32 @@ function render(s) {
   $("no-objects").textContent = s.desk ? "None" : "Learn the desk first";
   $("units").textContent = s.objects.length ? `(${s.objects[0].units === "mm" ? "mm, mm²" : "pixels"})` : "";
 
+  renderDrive(s.drive);
   renderPico(s.pico);
   if (!settingsLoaded) {
     fillSettings(s.settings);
     settingsLoaded = true;
   }
   renderLog(s.log);
+}
+
+function renderDrive(d) {
+  if (!d) return;
+  const names = { check: "Drive check", goto: "Go to marker", policy: "Policy" };
+  $("drive-state").textContent = d.running ? `Running: ${names[d.mode]}` : "Idle";
+  for (const id of ["btn-drive-check", "btn-goto", "btn-policy"]) {
+    $(id).disabled = d.running;
+  }
+  $("btn-policy").disabled = d.running || d.policies.length === 0;
+  // Rebuild the list only when the files in sim/ change, so a choice isn't reset.
+  const select = $("drive-policy");
+  const listed = Array.from(select.options, (o) => o.value);
+  if (listed.join("\n") !== d.policies.join("\n")) {
+    const chosen = select.value;
+    select.replaceChildren(...d.policies.map((p) => new Option(p, p)));
+    if (d.policies.includes(chosen)) select.value = chosen;
+  }
+  $("drive-result").textContent = d.last_result || "";
 }
 
 function renderPico(p) {
@@ -151,8 +171,38 @@ function showStopped() {
   $("dot").classList.remove("on");
   cancelSelecting();
   $("stopped").hidden = false;
-  document.querySelectorAll("button, input").forEach((el) => { el.disabled = true; });
+  document.querySelectorAll("button, input, select").forEach((el) => { el.disabled = true; });
 }
+
+// ----- driving the bot -----------------------------------------------------
+
+async function startDrive(mode) {
+  const body = { mode };
+  if (mode === "policy") {
+    body.policy = $("drive-policy").value;
+    body.guard = $("drive-guard").checked;
+    body.clean_on_arrival = $("drive-clean").checked;
+    if (!body.guard && !confirm("Run without the edge guard? The bot may drive off the desk.")) return;
+  }
+  try { await post("/api/drive/start", body); } catch (err) { toast(err.message); }
+}
+
+async function stopDrive() {
+  try { await post("/api/drive/stop"); } catch (err) { toast(err.message); }
+}
+
+// Space stops the bot unless something is being typed or picked.
+function typing() {
+  const el = document.activeElement;
+  if (!el) return false;
+  if (el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+  return el.tagName === "INPUT" && !["checkbox", "radio", "button", "submit"].includes(el.type);
+}
+
+$("btn-drive-check").addEventListener("click", () => startDrive("check"));
+$("btn-goto").addEventListener("click", () => startDrive("goto"));
+$("btn-policy").addEventListener("click", () => startDrive("policy"));
+$("btn-stop").addEventListener("click", stopDrive);
 
 // ----- buttons and keys ----------------------------------------------------
 
@@ -184,6 +234,13 @@ $("btn-recal").addEventListener("click", () => action("recalibrate"));
 
 document.addEventListener("keydown", (e) => {
   if (stopped || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === " ") {
+    // Stop comes before everything else, whichever button or checkbox has focus.
+    if (typing()) return;
+    e.preventDefault();
+    if (!e.repeat) stopDrive();
+    return;
+  }
   const tag = document.activeElement && document.activeElement.tagName;
   if (["INPUT", "SELECT", "TEXTAREA"].includes(tag)) return;
 
@@ -201,6 +258,11 @@ document.addEventListener("keydown", (e) => {
   else if (key === "s") snapshot();
   else return;
   e.preventDefault();
+});
+
+// A focused button or checkbox acts on Space when the key comes up; Space means Stop.
+document.addEventListener("keyup", (e) => {
+  if (e.key === " " && !stopped && !typing()) e.preventDefault();
 });
 
 // ----- filters -------------------------------------------------------------

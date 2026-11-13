@@ -114,6 +114,18 @@ button.quit { color: var(--bad); }
 aside { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 aside p { margin: 0; }
 
+/* The drive buttons are tapped on a phone next to a moving bot: keep them big. */
+#drive .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 0; }
+#drive .buttons button { flex: 1 1 auto; padding: 9px 12px; }
+#drive .drive-options { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+#drive .drive-options label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+#drive select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px;
+                background: var(--field); color: var(--text); max-width: 100%; }
+#drive .stop { width: 100%; padding: 14px; font-weight: 700;
+               background: #c62828; color: #fff; border: none; border-radius: 8px; }
+#drive .stop:active { background: #8e1c1c; }
+#drive-result { min-height: 1.2em; margin-top: 8px; font-size: 12px; overflow-wrap: anywhere; }
+
 .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
 .checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .checks input { margin: 0; }

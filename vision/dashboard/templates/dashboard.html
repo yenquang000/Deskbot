@@ -48,6 +48,22 @@
         <p id="bot" class="muted">Not visible</p>
       </section>
 
+      <section id="drive">
+        <h2>Drive <span id="drive-state" class="muted">Idle</span></h2>
+        <div class="buttons">
+          <button id="btn-drive-check" title="Run each move once and compare with the camera">Drive check</button>
+          <button id="btn-goto" title="Drive to marker 5 and follow it">Go to marker</button>
+          <button id="btn-policy" title="Run the trained policy">Run policy</button>
+        </div>
+        <div class="drive-options">
+          <label>Policy <select id="drive-policy"></select></label>
+          <label><input type="checkbox" id="drive-guard" checked> Edge guard</label>
+          <label><input type="checkbox" id="drive-clean"> Clean on arrival</label>
+        </div>
+        <button id="btn-stop" class="stop" title="Stop the bot now (Space)">STOP</button>
+        <p id="drive-result" class="muted"></p>
+      </section>
+
       <section>
         <h2>Objects <span id="units" class="muted"></span></h2>
         <table id="objects">
