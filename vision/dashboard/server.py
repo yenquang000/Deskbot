@@ -13,11 +13,11 @@ from werkzeug.serving import make_server
 
 import config
 from hardware.messaging import PicoLink
-from dashboard.drive import start_drive
+from dashboard.drive import DriveManager, DriveOptions, policy_path
 from dashboard.worker import TOGGLES, CameraWorker
 
 
-def create_app(worker, quit_event):
+def create_app(worker, quit_event, manager):
     app = Flask(__name__)
 
     def error(message, status=400):
@@ -44,7 +44,40 @@ def create_app(worker, quit_event):
 
     @app.get("/api/status")
     def status():
-        return jsonify(worker.status())
+        data = worker.status()
+        data["drive"] = manager.status()
+        return jsonify(data)
+
+    @app.post("/api/drive/start")
+    def drive_start():
+        body = request.get_json(silent=True) or {}
+        mode = body.get("mode")
+        try:
+            if mode == "goto":
+                options = DriveOptions(goto=True)
+            elif mode == "check":
+                options = DriveOptions(check=True)
+            elif mode == "policy":
+                options = DriveOptions(
+                    policy=policy_path(body.get("policy", "deskbot_policy.npz")),
+                    guard=bool(body.get("guard", True)),
+                    clean_on_arrival=bool(body.get("clean_on_arrival", False)))
+            else:
+                return error(f"Unknown drive mode: {mode}")
+            manager.start(options)
+        except ValueError as e:
+            return error(str(e))
+        except RuntimeError as e:
+            return error(str(e), 409)
+        worker.add_log(f"Drive: '{mode}' started from the dashboard.", "ok")
+        return jsonify({"ok": True})
+
+    @app.post("/api/drive/stop")
+    def drive_stop():
+        stopped = manager.stop()
+        worker.add_log("Drive: stopped from the dashboard."
+                       if stopped else "Drive: stop sent, thread still finishing.", "warn")
+        return jsonify({"ok": True, "stopped": stopped})
 
     @app.post("/api/action/<name>")
     def action(name):
@@ -67,6 +100,7 @@ def create_app(worker, quit_event):
                 return jsonify({"ok": True, "file": worker.snapshot()})
             elif name == "quit":
                 worker.add_log("Quit requested from the dashboard.")
+                manager.stop()  # stop the bot before the program winds down
                 quit_event.set()
             else:
                 return error(f"Unknown action: {name}", 404)
@@ -101,8 +135,9 @@ def run_dashboard(camera, host="127.0.0.1", port=8000, open_browser=True, drive=
     """
     Run the camera worker and the dashboard until Quit is clicked or Ctrl+C.
 
-    drive: DriveOptions to also run the policy (or the movement check) on the
-    bot, or None for vision only.
+    drive: DriveOptions to start that drive mode straight away (the --drive,
+    --drive-check and --goto flags), or None to start idle. Either way the
+    dashboard's Drive panel can start and stop modes afterwards.
     """
     settings = config.load()
 
@@ -117,7 +152,8 @@ def run_dashboard(camera, host="127.0.0.1", port=8000, open_browser=True, drive=
     link = PicoLink(settings.pico_port, settings.send_hz, on_reply)
     worker = CameraWorker(camera, settings, link)
     quit_event = threading.Event()
-    app = create_app(worker, quit_event)
+    manager = DriveManager(link, worker.add_log)
+    app = create_app(worker, quit_event, manager)
 
     try:
         server = make_server(host, port, app, threaded=True)
@@ -129,8 +165,8 @@ def run_dashboard(camera, host="127.0.0.1", port=8000, open_browser=True, drive=
 
     worker.start()
     link.start()
-    drive_stop = threading.Event()
-    drive_thread = start_drive(link, drive, worker.add_log, drive_stop) if drive else None
+    if drive is not None:
+        manager.start(drive)
     threading.Thread(target=server.serve_forever, daemon=True, name="dashboard").start()
 
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
@@ -147,9 +183,7 @@ def run_dashboard(camera, host="127.0.0.1", port=8000, open_browser=True, drive=
     except KeyboardInterrupt:
         pass
     finally:
-        if drive_thread is not None:  # while the link is still up, so "stop" gets out
-            drive_stop.set()
-            drive_thread.join(timeout=8)
+        manager.stop()  # first, while the link is still up, so "stop" reaches the Pico
         worker.stop()
         link.stop()
         worker.join(timeout=3)
